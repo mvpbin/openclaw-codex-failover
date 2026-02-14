@@ -1,0 +1,11 @@
+[Unit]
+Description=Run OpenClaw codex pool healthcheck twice daily (UTC)
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 UTC
+OnCalendar=*-*-* 21:00:00 UTC
+Persistent=true
+Unit=openclaw-healthcheck.service
+
+[Install]
+WantedBy=timers.target

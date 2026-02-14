@@ -1,0 +1,14 @@
+[Unit]
+Description=OpenClaw codex pool healthcheck
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=rdpuser
+WorkingDirectory=/data/openclaw
+ExecStart=/usr/bin/bash /data/openclaw/scripts/healthcheck_openai_codex_pool.sh
+SuccessExitStatus=1 2
+
+[Install]
+WantedBy=multi-user.target
