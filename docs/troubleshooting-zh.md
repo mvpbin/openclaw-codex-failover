@@ -31,18 +31,14 @@ grep -n "message send --channel telegram" /data/openclaw/scripts/healthcheck_ope
 
 ---
 
-## 3) 报告里不是 5 个账号
+## 3) 报告里的账号数和你预期不一致
 
 ```bash
 openclaw models status --json
 ```
 
-你应看到：
-- openai-codex:acc01
-- openai-codex:acc02
-- openai-codex:acc03
-- openai-codex:acc04
-- openai-codex:acc05
+说明：当前版本账号数**不设上限**，自动发现 `openai-codex:*`。
+请检查你实际导入的 profile 是否都存在、命名是否正确。
 
 ---
 

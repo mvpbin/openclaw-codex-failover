@@ -1,15 +1,31 @@
 # OpenClaw Codex 容灾机制（小白友好版）
 
-> 目标：让 `openai-codex:acc01..acc05` 每天自动体检，出问题只提醒具体账号（accXX），并推送 Telegram 摘要。
+> 目标：让 `openai-codex:*` 账号池每天自动体检，出问题只提醒具体账号（accXX），并推送 Telegram 摘要。
 
 ---
 
 ## 你能得到什么
 
 - ✅ 每天自动检查 2 次（UTC 09:00 / 21:00）
+- ✅ **账号数量无限制**（自动发现 `openai-codex:*`）
 - ✅ 精准定位失效账号（只报 accXX）
 - ✅ Telegram 中文+emoji 摘要
 - ✅ 自动生成重登建议命令（只针对失效账号）
+
+---
+
+## 账号数量建议（实战）
+
+不是越多越好。建议：
+
+- **推荐区间：5~12 个**（默认建议）
+- 少于 5：容灾冗余偏弱
+- 多于 12：维护成本明显上升（重登、排障、巡检压力大）
+
+可通过环境变量调整：
+
+- `OCX_RECOMMENDED_MIN`（默认 5）
+- `OCX_RECOMMENDED_MAX`（默认 12）
 
 ---
 
@@ -51,8 +67,9 @@ cat /data/openclaw/reports/openai_codex_health_latest.json
 ```
 
 重点看：
-- `discoveredCount` 是否为 `5`
-- `failedProfiles` 是否为空
+- `discoveredCount`（自动发现到的账号总数）
+- `failedProfiles`（失效账号）
+- `recommendations`（账号数量建议）
 - `exitCode`：`0=PASS` / `1=WARN` / `2=CRITICAL`
 
 ---
@@ -66,7 +83,7 @@ cat /data/openclaw/reports/openai_codex_health_latest.json
 会做：
 1. 检查账号池状态
 2. 轻量调用 `Reply exactly: ok`
-3. 发 Telegram 摘要
+3. 发 Telegram 摘要（单条，避免重复轰炸）
 
 ---
 
@@ -86,6 +103,16 @@ SIMULATE_UNUSABLE=openai-codex:acc03 /data/openclaw/scripts/healthcheck_openai_c
 - 顺序同步：`/data/openclaw/scripts/sync_openclaw_auth_order.sh`
 - 最新报告：`/data/openclaw/reports/openai_codex_health_latest.json`
 - 每日日志：`/data/openclaw/reports/openai_codex_health_YYYYMMDD.log`
+
+---
+
+## 这次已做的细节改进
+
+1. 去掉“写死 5 个账号”，改成自动发现 `openai-codex:*`
+2. 新增账号规模建议（5~12 默认，可配置）
+3. Telegram 改为单条摘要，避免 WARN/CRITICAL 重复推送
+4. 轻量调用增加超时保护，减少脚本卡住风险
+5. 通知目标、阈值、provider 改为环境变量可配置
 
 ---
 

@@ -1,10 +1,6 @@
 # 快速开始（超简版）
 
-## 第1步：复制项目到服务器
-
-如果你已经在服务器上有这份代码，跳过。
-
-## 第2步：一键安装
+## 第1步：一键安装
 
 ```bash
 sudo bash -lc '
@@ -20,23 +16,24 @@ systemctl enable --now openclaw-healthcheck.timer
 '
 ```
 
-## 第3步：手动跑一次
+## 第2步：手动跑一次
 
 ```bash
 sudo systemctl start openclaw-healthcheck.service
 ```
 
-## 第4步：看结果
+## 第3步：看结果
 
 ```bash
 cat /data/openclaw/reports/openai_codex_health_latest.json
 ```
 
+- `discoveredCount`：自动发现到的账号总数（无限制）
 - `exitCode=0` => PASS
 - `exitCode=1` => WARN
 - `exitCode=2` => CRITICAL
 
-## 第5步：验证 Telegram 摘要
+## 第4步：验证 Telegram 摘要
 
 ```bash
 /data/openclaw/scripts/healthcheck_openai_codex_pool.sh
@@ -48,4 +45,10 @@ cat /data/openclaw/reports/openai_codex_health_latest.json
 
 ```bash
 SIMULATE_UNUSABLE=openai-codex:acc03 /data/openclaw/scripts/healthcheck_openai_codex_pool.sh || true
+```
+
+## 可选：调整建议账号数区间
+
+```bash
+OCX_RECOMMENDED_MIN=6 OCX_RECOMMENDED_MAX=15 /data/openclaw/scripts/healthcheck_openai_codex_pool.sh
 ```
