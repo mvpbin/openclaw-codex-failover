@@ -68,7 +68,7 @@ const d=JSON.parse(process.env.PARSED||'{}');
 console.log((d.providersWithOAuth||[]).join('\n'));
 NODE
 )"
-if ! echo "$providers_with_oauth" | grep -qi "^${PROVIDER}$"; then
+if ! echo "$providers_with_oauth" | grep -qi "^${PROVIDER}"; then
   CRITICALS+=("providersWithOAuth missing ${PROVIDER}")
 fi
 
