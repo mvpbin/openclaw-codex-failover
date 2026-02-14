@@ -1,55 +1,106 @@
-# OpenClaw Codex Failover Toolkit
+# OpenClaw Codex 容灾机制（小白友好版）
 
-面向 OpenClaw + `openai-codex` 多账号容灾的生产化工具包：
+> 目标：让 `openai-codex:acc01..acc05` 每天自动体检，出问题只提醒具体账号（accXX），并推送 Telegram 摘要。
 
-- 账号池健康检查（每日 2 次）
-- 精准失效账号识别（accXX 级别）
-- 过期预警（remainingMs < 24h）
-- Telegram 摘要与告警推送
-- 自动同步 auth order
+---
 
-## 功能清单
+## 你能得到什么
 
-- `scripts/healthcheck_openai_codex_pool.sh`
-  - 读取 `openclaw models status --json`
-  - 输出可读日志 + JSON 报告
-  - 退出码：`0=PASS` / `1=WARN` / `2=CRITICAL`
-  - 轻量实测调用：`Reply exactly: ok`
-  - 生成失效账号重登建议命令
-- `scripts/sync_openclaw_auth_order.sh`
-  - 自动刷新 `openai-codex` 容灾顺序
-- `systemd/openclaw-healthcheck.service`
-- `systemd/openclaw-healthcheck.timer`
-  - UTC 每天 `09:00` / `21:00` 执行
+- ✅ 每天自动检查 2 次（UTC 09:00 / 21:00）
+- ✅ 精准定位失效账号（只报 accXX）
+- ✅ Telegram 中文+emoji 摘要
+- ✅ 自动生成重登建议命令（只针对失效账号）
 
-## 目录结构
+---
+
+## 0基础：一键安装（复制就行）
+
+在服务器终端执行：
 
 ```bash
-scripts/
-  healthcheck_openai_codex_pool.sh
-  sync_openclaw_auth_order.sh
-systemd/
-  openclaw-healthcheck.service
-  openclaw-healthcheck.timer
-docs/
-  quickstart-zh.md
-  troubleshooting-zh.md
+sudo bash -lc '
+set -e
+mkdir -p /data/openclaw/scripts /data/openclaw/reports /data/openclaw/systemd
+cp scripts/*.sh /data/openclaw/scripts/
+cp systemd/* /data/openclaw/systemd/
+chmod +x /data/openclaw/scripts/*.sh
+cp /data/openclaw/systemd/openclaw-healthcheck.service /etc/systemd/system/
+cp /data/openclaw/systemd/openclaw-healthcheck.timer /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now openclaw-healthcheck.timer
+systemctl start openclaw-healthcheck.service || true
+'
 ```
 
-## 快速开始
+---
 
-请直接看：[`docs/quickstart-zh.md`](docs/quickstart-zh.md)
+## 安装后怎么确认成功
 
-## 报告与日志
+### 1) 看 timer 是否在跑
 
+```bash
+systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
+```
+
+你应该看到：`active (waiting)`。
+
+### 2) 看最新报告
+
+```bash
+cat /data/openclaw/reports/openai_codex_health_latest.json
+```
+
+重点看：
+- `discoveredCount` 是否为 `5`
+- `failedProfiles` 是否为空
+- `exitCode`：`0=PASS` / `1=WARN` / `2=CRITICAL`
+
+---
+
+## 手动马上跑一次
+
+```bash
+/data/openclaw/scripts/healthcheck_openai_codex_pool.sh
+```
+
+会做：
+1. 检查账号池状态
+2. 轻量调用 `Reply exactly: ok`
+3. 发 Telegram 摘要
+
+---
+
+## 如果要模拟“acc03失效”（无破坏）
+
+```bash
+SIMULATE_UNUSABLE=openai-codex:acc03 /data/openclaw/scripts/healthcheck_openai_codex_pool.sh || true
+```
+
+用于验证告警模板和精确定位是否正常。
+
+---
+
+## 最常用文件
+
+- 主脚本：`/data/openclaw/scripts/healthcheck_openai_codex_pool.sh`
+- 顺序同步：`/data/openclaw/scripts/sync_openclaw_auth_order.sh`
 - 最新报告：`/data/openclaw/reports/openai_codex_health_latest.json`
 - 每日日志：`/data/openclaw/reports/openai_codex_health_YYYYMMDD.log`
 
-## 安全建议
+---
 
-- 不要把任何 token / API key 提交到仓库。
-- 使用后轮换临时凭证。
-- 建议仓库设为 Private。
+## 常见问题
+
+看这里：[`docs/troubleshooting-zh.md`](docs/troubleshooting-zh.md)
+
+---
+
+## 安全提醒
+
+- 不要把 token / key 提交到仓库
+- 凭证泄露后立即轮换
+
+---
 
 ## License
 
