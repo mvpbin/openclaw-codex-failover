@@ -69,3 +69,20 @@ sudo systemctl restart openclaw-healthcheck.timer
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-run
 ```
+
+## 9) 手动执行修复（推荐）
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
+```
+
+会读取最新健康报告中的 `failedProfiles`，尝试修复并输出未修复账号的手动重登命令。
+
+## 10) 开启自动修复（可选）
+
+在 `/etc/openclaw-healthcheck.env` 增加：
+
+```bash
+OCX_AUTO_REPAIR=1
+```
+

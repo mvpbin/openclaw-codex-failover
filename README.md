@@ -93,6 +93,26 @@ SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/hea
 
 ---
 
+## 新增：修复功能（Repair）
+
+现在不仅能“发现异常”，还能执行“修复流程”：
+
+- 脚本：`scripts/repair_openai_codex_pool.sh`
+- 输入：最新健康报告中的 `failedProfiles`
+- 动作：
+  1) 尝试用映射的 auth.json 非交互修复
+  2) 修复后自动 sync auth order
+  3) 未修复账号输出对应手动重登命令
+  4) 生成修复报告：`openai_codex_repair_latest.json`
+
+可选自动修复（告警时触发）：
+- `OCX_AUTO_REPAIR=1`
+
+映射文件示例：
+- `config/openai-codex-auth-map.env.example`
+
+---
+
 ## 本次已完成的细节增强
 
 1. **路径可配置化**：统一走 `OCX_BASE_DIR`
@@ -128,3 +148,4 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-r
 ## License
 
 MIT
+

@@ -24,6 +24,7 @@ LOCK_FILE="${OCX_LOCK_FILE:-$BASE_DIR/run/openai_codex_healthcheck.lock}"
 ALERT_STATE_FILE="${OCX_ALERT_STATE_FILE:-$BASE_DIR/run/openai_codex_alert_state.json}"
 ALERT_BURST_COUNT="${OCX_ALERT_BURST_COUNT:-3}"
 ALERT_REMIND_SECONDS="${OCX_ALERT_REMIND_SECONDS:-3600}"
+AUTO_REPAIR="${OCX_AUTO_REPAIR:-0}"
 DRY_RUN="${OCX_DRY_RUN:-0}"
 
 mkdir -p "$REPORT_DIR" "$(dirname "$LOCK_FILE")" "$(dirname "$ALERT_STATE_FILE")"
@@ -234,6 +235,16 @@ if ((${#CRITICALS[@]} > 0)); then
   exit_code=2
 elif ((${#WARNINGS[@]} > 0 || ${#EXPIRING_PROFILES[@]} > 0)); then
   exit_code=1
+fi
+
+# optional auto-repair (best effort)
+if [[ "$AUTO_REPAIR" == "1" && "$exit_code" -ne 0 && "$DRY_RUN" != "1" ]]; then
+  if [[ -x "$BASE_DIR/scripts/repair_openai_codex_pool.sh" ]]; then
+    "$BASE_DIR/scripts/repair_openai_codex_pool.sh" "$LATEST_JSON" >/dev/null 2>&1 || true
+    WARNINGS+=("auto-repair attempted")
+  else
+    WARNINGS+=("auto-repair enabled but repair script missing")
+  fi
 fi
 
 # report json

@@ -99,3 +99,15 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-run
 ```
+
+---
+
+## 9) 一直提示某个 accXX 掉线怎么办
+
+先跑修复脚本：
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
+```
+
+若仍未修复，按输出的手动重登命令逐个处理（只处理失效账号）。
