@@ -79,5 +79,5 @@ sudo systemctl restart openclaw-healthcheck.timer
 ## 6) 一键重跑健康检查
 
 ```bash
-/data/openclaw/scripts/healthcheck_openai_codex_pool.sh
+${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh
 ```
