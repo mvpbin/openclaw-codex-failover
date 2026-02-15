@@ -6,18 +6,24 @@
 
 ## 一句话流程
 
-**检测 → 告警 → 修复 →（可选）删除 → 补位**
+**检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
 
 ---
 
 ## 你能得到什么
 
 - ✅ 账号池自动检测（默认每10分钟）
-- ✅ 异常首次连发3次告警，未修复每小时提醒1次
+- ✅ 状态机：Healthy / Degraded / Repairing / Recovered
+- ✅ 异常分类：auth / network / provider / unknown
+- ✅ 熔断器：连续失败账号自动 cooldown
+- ✅ 修复节流：最短间隔限制，避免死循环
+- ✅ 双探针：ok + pong，降低假健康
+- ✅ 告警策略：首次3连发 + 每小时提醒 + 去重窗口
 - ✅ 精准定位失效账号（accXX）
 - ✅ 修复脚本（自动尝试 + 手动命令）
-- ✅ 删除脚本（封禁账号下线）
+- ✅ 删除脚本（封禁账号下线，可选）
 - ✅ 补位脚本（新账号快速补回 accXX）
+- ✅ SLO指标文件 + 配置快照历史
 
 ---
 
@@ -98,10 +104,15 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_NOTIFY_TARGET` | `182211955` | 告警目标 |
 | `OCX_ALERT_BURST_COUNT` | `3` | 首次异常告警次数 |
 | `OCX_ALERT_REMIND_SECONDS` | `3600` | 持续异常提醒间隔 |
+| `OCX_ALERT_DEDUP_SECONDS` | `900` | 同类告警去重窗口 |
+| `OCX_CB_FAIL_THRESHOLD` | `3` | 熔断触发失败次数 |
+| `OCX_CB_COOLDOWN_SECONDS` | `3600` | 熔断冷却时长 |
+| `OCX_AUTO_REORDER` | `0` | 1=按健康分自动重排账号顺序 |
 | `OCX_AGENT_TIMEOUT_SECONDS` | `45` | 轻量调用超时 |
 | `OCX_LOG_RETENTION_DAYS` | `30` | 日志保留天数 |
 | `OCX_DRY_RUN` | `0` | 1=只检查不发消息 |
 | `OCX_AUTO_REPAIR` | `0` | 1=异常时自动触发修复 |
+| `OCX_REPAIR_MIN_INTERVAL_SECONDS` | `1800` | 自动修复最短间隔 |
 | `OCX_SUGGEST_DECOMMISSION` | `0` | 1=在修复建议中显示删除命令 |
 
 ---

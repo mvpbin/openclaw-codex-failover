@@ -54,3 +54,10 @@ fi
 
 # quick verify
 openclaw models status --json | node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync(0,'utf8'));const p='${PROFILE_ID}';const ok=((d.auth?.oauth?.profiles||[]).some(x=>x.profileId===p));console.log(ok?'onboard ok: '+p:'onboard maybe failed: '+p);process.exit(ok?0:1)"
+
+# optional post-onboard health verify (no notify)
+if [[ -x "$BASE_DIR/scripts/healthcheck_openai_codex_pool.sh" ]]; then
+  OCX_DRY_RUN=1 "$BASE_DIR/scripts/healthcheck_openai_codex_pool.sh" >/dev/null 2>&1 || true
+fi
+
+echo "post-onboard verify done"
