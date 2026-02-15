@@ -86,3 +86,10 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
 OCX_AUTO_REPAIR=1
 ```
 
+## 11) 账号被封禁时：删除并替换
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh openai-codex:acc03 banned
+# 然后登录新账号并导入到相同/新 profileId
+```
+

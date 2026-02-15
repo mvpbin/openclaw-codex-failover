@@ -110,4 +110,10 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-r
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
 ```
 
-若仍未修复，按输出的手动重登命令逐个处理（只处理失效账号）。
+若仍未修复，按输出的手动命令逐个处理（只处理失效账号）。
+
+若账号已封禁，执行“删除并替换”：
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh openai-codex:acc03 banned
+```

@@ -93,16 +93,17 @@ SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/hea
 
 ---
 
-## 新增：修复功能（Repair）
+## 新增：修复 + 删除替换功能
 
 现在不仅能“发现异常”，还能执行“修复流程”：
 
-- 脚本：`scripts/repair_openai_codex_pool.sh`
+- 修复脚本：`scripts/repair_openai_codex_pool.sh`
+- 删除脚本：`scripts/decommission_openai_codex_profile.sh`
 - 输入：最新健康报告中的 `failedProfiles`
 - 动作：
   1) 尝试用映射的 auth.json 非交互修复
   2) 修复后自动 sync auth order
-  3) 未修复账号输出对应手动重登命令
+  3) 未修复账号输出两条路线：重登 / 删除后替换
   4) 生成修复报告：`openai_codex_repair_latest.json`
 
 可选自动修复（告警时触发）：
