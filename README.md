@@ -99,6 +99,7 @@ SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/hea
 
 - 修复脚本：`scripts/repair_openai_codex_pool.sh`
 - 删除脚本：`scripts/decommission_openai_codex_profile.sh`
+- 补位脚本：`scripts/onboard_openai_codex_profile.sh`
 - 输入：最新健康报告中的 `failedProfiles`
 - 动作：
   1) 尝试用映射的 auth.json 非交互修复

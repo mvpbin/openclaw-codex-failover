@@ -90,6 +90,15 @@ OCX_AUTO_REPAIR=1
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh openai-codex:acc03 banned
-# 然后登录新账号并导入到相同/新 profileId
+```
+
+## 12) 一条命令补位新账号（推荐）
+
+```bash
+# 先登录拿到 /home/rdpuser/.codex/auth.json
+codex logout && codex -c cli_auth_credentials_store='file' login --device-auth
+
+# 再补位回 acc03
+${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /home/rdpuser/.codex/auth.json
 ```
 

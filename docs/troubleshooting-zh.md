@@ -116,4 +116,6 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh openai-codex:acc03 banned
+codex logout && codex -c cli_auth_credentials_store='file' login --device-auth
+${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /home/rdpuser/.codex/auth.json
 ```
