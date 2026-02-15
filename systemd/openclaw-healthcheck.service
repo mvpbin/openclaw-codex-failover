@@ -6,8 +6,8 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 User=rdpuser
-WorkingDirectory=/data/openclaw
-ExecStart=/usr/bin/bash /data/openclaw/scripts/healthcheck_openai_codex_pool.sh
+EnvironmentFile=-/etc/openclaw-healthcheck.env
+ExecStart=/usr/bin/bash -lc '${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh'
 SuccessExitStatus=1 2
 
 [Install]

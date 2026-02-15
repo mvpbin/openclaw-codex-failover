@@ -91,15 +91,33 @@ SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/hea
 
 ---
 
-## 进一步改进（我已识别）
+## 本次已完成的细节增强
 
-1. **路径可配置化**（本次已改）
-2. **target chat 可配置**：将 Telegram target 从脚本硬编码改为 `.env` 读取（下个版本）
-3. **并发锁**：防止手动执行与 timer 同时跑（下个版本）
-4. **日志轮转**：避免长期增长（下个版本）
-5. **退出码映射文档化**：给 systemd/监控平台更清晰对接示例（下个版本）
+1. **路径可配置化**：统一走 `OCX_BASE_DIR`
+2. **通知目标可配置**：支持 `/etc/openclaw-healthcheck.env`
+3. **并发锁**：已加 `flock` 防重入
+4. **日志治理**：脚本内置保留天数 + 提供 logrotate 示例
+5. **dry-run**：支持 `--dry-run` 或 `OCX_DRY_RUN=1`（只检查不发消息）
+
+附加文件：
+- `openclaw-healthcheck.env.example`
+- `logrotate.openclaw-healthcheck.example`
 
 ---
+
+## 可选：启用环境文件（推荐）
+
+```bash
+sudo cp openclaw-healthcheck.env.example /etc/openclaw-healthcheck.env
+sudo systemctl daemon-reload
+sudo systemctl restart openclaw-healthcheck.timer
+```
+
+## 可选：只检查不发 Telegram
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-run
+```
 
 ## 常见问题
 

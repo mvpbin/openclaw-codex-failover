@@ -55,3 +55,17 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh
 ```bash
 SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh || true
 ```
+
+## 7) 推荐：启用环境配置文件
+
+```bash
+sudo cp openclaw-healthcheck.env.example /etc/openclaw-healthcheck.env
+sudo systemctl daemon-reload
+sudo systemctl restart openclaw-healthcheck.timer
+```
+
+## 8) 只检查不发消息（dry-run）
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-run
+```

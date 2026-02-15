@@ -81,3 +81,21 @@ sudo systemctl restart openclaw-healthcheck.timer
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh
 ```
+
+---
+
+## 7) 提示“another healthcheck is running”
+
+这是并发锁生效（防止重复运行）。
+
+处理：
+- 等待当前任务结束再重跑
+- 检查是否有长时间卡住的进程
+
+---
+
+## 8) 想只测试脚本逻辑，不发 Telegram
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-run
+```
