@@ -21,9 +21,12 @@ TELEGRAM_TARGET="${OCX_NOTIFY_TARGET:-182211955}"
 OPENCLAW_AGENT_TIMEOUT="${OCX_AGENT_TIMEOUT_SECONDS:-45}"
 LOG_RETENTION_DAYS="${OCX_LOG_RETENTION_DAYS:-30}"
 LOCK_FILE="${OCX_LOCK_FILE:-$BASE_DIR/run/openai_codex_healthcheck.lock}"
+ALERT_STATE_FILE="${OCX_ALERT_STATE_FILE:-$BASE_DIR/run/openai_codex_alert_state.json}"
+ALERT_BURST_COUNT="${OCX_ALERT_BURST_COUNT:-3}"
+ALERT_REMIND_SECONDS="${OCX_ALERT_REMIND_SECONDS:-3600}"
 DRY_RUN="${OCX_DRY_RUN:-0}"
 
-mkdir -p "$REPORT_DIR" "$(dirname "$LOCK_FILE")"
+mkdir -p "$REPORT_DIR" "$(dirname "$LOCK_FILE")" "$(dirname "$ALERT_STATE_FILE")"
 DATE_UTC="$(date -u +%Y%m%d)"
 TS_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 LOG_FILE="$REPORT_DIR/openai_codex_health_${DATE_UTC}.log"
@@ -244,7 +247,10 @@ log "criticals: ${CRITICALS[*]:-none}"
 log "sync: $sync_note"
 log "report: $LATEST_JSON"
 
-# telegram summary (single message, avoid duplicates)
+# telegram alert policy:
+# - First abnormal detection => burst 3 alerts (configurable)
+# - Unresolved abnormal => remind every hour (configurable)
+# - Recovery => send one recovery message
 if [[ "$DRY_RUN" != "1" ]]; then
   level="PASS"
   if [[ "$exit_code" -eq 2 ]]; then
@@ -252,8 +258,19 @@ if [[ "$DRY_RUN" != "1" ]]; then
   elif [[ "$exit_code" -eq 1 ]]; then
     level="WARN"
   fi
+
   failed_csv="$(printf '%s, ' "${FAILED_PROFILES[@]:-}" | sed 's/, $//')"
   [[ -z "$failed_csv" ]] && failed_csv="none"
+
+  reason="无"
+  if ((${#CRITICALS[@]} > 0)); then
+    reason="$(printf '%s; ' "${CRITICALS[@]}" | sed 's/; $//')"
+  elif ((${#WARNINGS[@]} > 0)); then
+    reason="$(printf '%s; ' "${WARNINGS[@]}" | sed 's/; $//')"
+  elif ((${#EXPIRING_PROFILES[@]} > 0)); then
+    reason="token 即将过期"
+  fi
+
   if [[ "$level" == "PASS" ]]; then
     icon="✅"; level_cn="健康"
   elif [[ "$level" == "WARN" ]]; then
@@ -266,8 +283,42 @@ if [[ "$DRY_RUN" != "1" ]]; then
   if ((${#RELOGIN_CMDS[@]} > 0)); then
     action_line="请仅重登失效账号（见报告 reloginCommands）"
   fi
-  msg="${icon} OpenClaw 每日健康检查（${PROVIDER}）\n状态：${level_cn} (${level})\n账号数：${#ALL_PROFILES[@]}（建议 ${RECOMMENDED_MIN}-${RECOMMENDED_MAX}）\n失效账号：${failed_csv}\n处理建议：${action_line}\n报告：${LATEST_JSON}"
-  openclaw message send --channel "$TELEGRAM_CHANNEL" --target "$TELEGRAM_TARGET" --message "$msg" >/dev/null 2>&1 || true
+
+  msg="${icon} OpenClaw 健康检查（${PROVIDER}）\n状态：${level_cn} (${level})\n账号数：${#ALL_PROFILES[@]}（建议 ${RECOMMENDED_MIN}-${RECOMMENDED_MAX}）\n失效账号：${failed_csv}\n异常原因：${reason}\n处理建议：${action_line}\n报告：${LATEST_JSON}"
+
+  now_ts="$(date +%s)"
+  prev_level="PASS"
+  prev_alert_ts=0
+  if [[ -f "$ALERT_STATE_FILE" ]]; then
+    prev_level="$(node -e "const fs=require('fs');try{const o=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(String(o.level||'PASS'));}catch{process.stdout.write('PASS')}" "$ALERT_STATE_FILE")"
+    prev_alert_ts="$(node -e "const fs=require('fs');try{const o=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));process.stdout.write(String(Number(o.lastAlertTs||0)));}catch{process.stdout.write('0')}" "$ALERT_STATE_FILE")"
+  fi
+
+  send_once() {
+    openclaw message send --channel "$TELEGRAM_CHANNEL" --target "$TELEGRAM_TARGET" --message "$1" >/dev/null 2>&1 || true
+  }
+
+  if [[ "$level" != "PASS" ]]; then
+    if [[ "$prev_level" == "PASS" ]]; then
+      i=1
+      while (( i <= ALERT_BURST_COUNT )); do
+        send_once "$msg\n第 ${i}/${ALERT_BURST_COUNT} 次告警"
+        i=$((i+1))
+      done
+      echo "{\"level\":\"$level\",\"lastAlertTs\":$now_ts}" > "$ALERT_STATE_FILE"
+    else
+      delta=$(( now_ts - prev_alert_ts ))
+      if (( delta >= ALERT_REMIND_SECONDS )); then
+        send_once "$msg\n持续异常提醒（每小时一次）"
+        echo "{\"level\":\"$level\",\"lastAlertTs\":$now_ts}" > "$ALERT_STATE_FILE"
+      fi
+    fi
+  else
+    if [[ "$prev_level" != "PASS" ]]; then
+      send_once "✅ OpenClaw 健康恢复（${PROVIDER}）\n状态：PASS\n报告：${LATEST_JSON}"
+    fi
+    echo "{\"level\":\"PASS\",\"lastAlertTs\":$now_ts}" > "$ALERT_STATE_FILE"
+  fi
 else
   log "dry-run enabled: skip Telegram notify"
 fi

@@ -1,9 +1,8 @@
 [Unit]
-Description=Run OpenClaw codex pool healthcheck twice daily (UTC)
+Description=Run OpenClaw codex pool healthcheck every 10 minutes (UTC)
 
 [Timer]
-OnCalendar=*-*-* 09:00:00 UTC
-OnCalendar=*-*-* 21:00:00 UTC
+OnCalendar=*:0/10
 Persistent=true
 Unit=openclaw-healthcheck.service
 
