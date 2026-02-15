@@ -20,6 +20,7 @@ TELEGRAM_CHANNEL="${OCX_NOTIFY_CHANNEL:-telegram}"
 TELEGRAM_TARGET="${OCX_NOTIFY_TARGET:-182211955}"
 DO_NOTIFY="${OCX_REPAIR_NOTIFY:-1}"
 DO_RESTART_GATEWAY="${OCX_REPAIR_RESTART_GATEWAY:-0}"
+SUGGEST_DECOMMISSION="${OCX_SUGGEST_DECOMMISSION:-0}"
 
 if [[ ! -f "$REPORT_PATH" ]]; then
   echo "report not found: $REPORT_PATH" >&2
@@ -68,7 +69,9 @@ for profile in "${FAILED[@]}"; do
   if [[ "$ok" -eq 0 ]]; then
     unresolved+=("$profile")
     manual_cmds+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && /data/openclaw/scripts/import_codex_auth_to_openclaw.sh $profile main /home/rdpuser/.codex/auth.json")
-    manual_cmds+=("$short(封禁/失效不可恢复): /data/openclaw/scripts/decommission_openai_codex_profile.sh $profile banned && # 然后添加新账号并导入")
+    if [[ "$SUGGEST_DECOMMISSION" == "1" ]]; then
+      manual_cmds+=("$short(封禁/失效不可恢复): /data/openclaw/scripts/decommission_openai_codex_profile.sh $profile banned && # 然后添加新账号并导入")
+    fi
   fi
 done
 
