@@ -1,104 +1,58 @@
-# 快速开始（超简版，可换路径）
+# 快速开始（最终版）
 
-## 1) 选择部署路径
+## 1) 安装
 
 ```bash
-# 推荐（有 /data）
+# 推荐路径
 export OCX_BASE_DIR=/data/openclaw
 
-# 或默认兼容
-# export OCX_BASE_DIR=$HOME/.openclaw/openclaw-tools
-```
-
-## 2) 一键安装
-
-```bash
 sudo bash -lc '
 set -e
 : "${OCX_BASE_DIR:=/data/openclaw}"
-mkdir -p "$OCX_BASE_DIR/scripts" "$OCX_BASE_DIR/reports" "$OCX_BASE_DIR/systemd"
+mkdir -p "$OCX_BASE_DIR/scripts" "$OCX_BASE_DIR/reports" "$OCX_BASE_DIR/systemd" "$OCX_BASE_DIR/config"
 cp scripts/*.sh "$OCX_BASE_DIR/scripts/"
 cp systemd/* "$OCX_BASE_DIR/systemd/"
+cp -n config/openai-codex-auth-map.env.example "$OCX_BASE_DIR/config/openai-codex-auth-map.env" || true
 chmod +x "$OCX_BASE_DIR/scripts"/*.sh
 cp "$OCX_BASE_DIR/systemd/openclaw-healthcheck.service" /etc/systemd/system/
 cp "$OCX_BASE_DIR/systemd/openclaw-healthcheck.timer" /etc/systemd/system/
+cp -n openclaw-healthcheck.env.example /etc/openclaw-healthcheck.env || true
 systemctl daemon-reload
 systemctl enable --now openclaw-healthcheck.timer
 '
 ```
 
-## 3) 手动跑一次
+## 2) 验收
 
 ```bash
 sudo systemctl start openclaw-healthcheck.service
-```
-
-## 4) 看结果
-
-```bash
+systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 cat ${OCX_BASE_DIR:-/data/openclaw}/reports/openai_codex_health_latest.json
 ```
 
-- `discoveredCount`：自动发现账号总数（无限制）
-- `exitCode=0` => PASS
-- `exitCode=1` => WARN
-- `exitCode=2` => CRITICAL
-
-## 5) 验证 Telegram 摘要
-
-```bash
-${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh
-```
-
-## 6) 无破坏模拟
-
-```bash
-SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh || true
-```
-
-## 7) 推荐：启用环境配置文件
-
-```bash
-sudo cp openclaw-healthcheck.env.example /etc/openclaw-healthcheck.env
-sudo systemctl daemon-reload
-sudo systemctl restart openclaw-healthcheck.timer
-```
-
-## 8) 只检查不发消息（dry-run）
-
-```bash
-${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-run
-```
-
-## 9) 手动执行修复（推荐）
+## 3) 异常时修复
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
 ```
 
-会读取最新健康报告中的 `failedProfiles`，尝试修复并输出未修复账号的手动重登命令。
-
-## 10) 开启自动修复（可选）
-
-在 `/etc/openclaw-healthcheck.env` 增加：
-
-```bash
-OCX_AUTO_REPAIR=1
-```
-
-## 11) 账号被封禁时：删除并替换
+## 4) 封禁时删除并补位（可选）
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh openai-codex:acc03 banned
-```
-
-## 12) 一条命令补位新账号（推荐）
-
-```bash
-# 先登录拿到 /home/rdpuser/.codex/auth.json
 codex logout && codex -c cli_auth_credentials_store='file' login --device-auth
-
-# 再补位回 acc03
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /home/rdpuser/.codex/auth.json
 ```
 
+## 5) 常用开关
+
+```bash
+# 只检查不通知
+OCX_DRY_RUN=1 ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh
+
+# 开启自动修复
+sudo sed -i 's/^# OCX_AUTO_REPAIR=1/OCX_AUTO_REPAIR=1/' /etc/openclaw-healthcheck.env
+
+# 删除建议设为可选（默认0，不提示删除）
+# OCX_SUGGEST_DECOMMISSION=0
+```
