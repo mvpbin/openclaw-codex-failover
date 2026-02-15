@@ -39,6 +39,7 @@ FAILED_PROFILES=()
 EXPIRING_PROFILES=()
 ALL_PROFILES=()
 UNUSABLE_PROFILES=()
+declare -A PROFILE_EMAIL_MAP
 
 SIMULATE_UNUSABLE="${SIMULATE_UNUSABLE:-}"
 if [[ "${1:-}" == "--simulate-unusable" ]]; then
@@ -49,6 +50,23 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 log(){ echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG_FILE"; }
+mask_email(){
+  local e="$1"
+  if [[ "$e" == *"@"* ]]; then
+    local name="${e%@*}" dom="${e#*@}"
+    [[ ${#name} -gt 1 ]] && echo "${name:0:1}***@${dom}" || echo "***@${dom}"
+  else
+    echo "$e"
+  fi
+}
+profile_display(){
+  local p="$1" email="${PROFILE_EMAIL_MAP[$p]:-}"
+  if [[ -n "$email" ]]; then
+    echo "${p#${PROFILE_PREFIX}}($(mask_email "$email"))"
+  else
+    echo "${p#${PROFILE_PREFIX}}"
+  fi
+}
 
 # prevent overlap (manual + timer)
 exec 9>"$LOCK_FILE"
@@ -105,6 +123,28 @@ NODE
 if (( profile_count < MIN_PROFILES )); then
   CRITICALS+=("${PROVIDER} profiles count < ${MIN_PROFILES}")
 fi
+
+# profile -> email label map (from models status labels)
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  pid="${line%%$'\t'*}"
+  email="${line##*$'\t'}"
+  [[ -n "$pid" && -n "$email" ]] && PROFILE_EMAIL_MAP["$pid"]="$email"
+done < <(STATUS_JSON="$status_json" PROVIDER="$PROVIDER" node - <<'NODE'
+const obj=JSON.parse(process.env.STATUS_JSON||'{}');
+const provider=process.env.PROVIDER||'openai-codex';
+const labels=((obj.auth?.providers||[]).find(p=>p.provider===provider)?.profiles?.labels)||[];
+for (const l of labels){
+  const s=String(l||'');
+  const parts=s.split('=');
+  if(parts.length>=2){
+    const id=parts[0].trim();
+    const email=parts.slice(1).join('=').trim();
+    if(id&&email&&email.includes('@')) console.log(`${id}\t${email}`);
+  }
+}
+NODE
+)
 
 while IFS= read -r p; do
   [[ -n "$p" ]] && UNUSABLE_PROFILES+=("$p")
@@ -212,10 +252,15 @@ WARN_JOINED="$(printf '%s\n' "${WARNINGS[@]:-}")" \
 CRIT_JOINED="$(printf '%s\n' "${CRITICALS[@]:-}")" \
 EXP_JOINED="$(printf '%s\n' "${EXPIRING_PROFILES[@]:-}")" \
 RELOGIN_JOINED="$(printf '%s\n' "${RELOGIN_CMDS[@]:-}")" \
+EMAIL_MAP_JOINED="$(for k in "${!PROFILE_EMAIL_MAP[@]}"; do echo "$k=${PROFILE_EMAIL_MAP[$k]}"; done)" \
 DRY_RUN="$DRY_RUN" \
 node - <<'NODE'
 const fs=require('fs');
 const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const mapLines=split(process.env.EMAIL_MAP_JOINED);
+const emailMap={};
+for(const line of mapLines){const i=line.indexOf('='); if(i>0){emailMap[line.slice(0,i).trim()]=line.slice(i+1).trim();}}
+const failed=split(process.env.FAILED_JOINED);
 const report={
   ts: process.env.TS_UTC,
   provider: process.env.PROVIDER,
@@ -224,7 +269,8 @@ const report={
   recommendations: {
     accountCount: `建议 ${process.env.REC_MIN}-${process.env.REC_MAX} 个账号池（过少影响容灾，过多增加维护成本）`
   },
-  failedProfiles: split(process.env.FAILED_JOINED),
+  failedProfiles: failed,
+  failedProfilesWithEmail: failed.map(p=>({profileId:p,email:emailMap[p]||''})),
   expiringProfiles: split(process.env.EXP_JOINED),
   warnings: split(process.env.WARN_JOINED),
   criticals: split(process.env.CRIT_JOINED),
@@ -259,8 +305,14 @@ if [[ "$DRY_RUN" != "1" ]]; then
     level="WARN"
   fi
 
-  failed_csv="$(printf '%s, ' "${FAILED_PROFILES[@]:-}" | sed 's/, $//')"
-  [[ -z "$failed_csv" ]] && failed_csv="none"
+  failed_csv="none"
+  if ((${#FAILED_PROFILES[@]} > 0)); then
+    failed_csv=""
+    for fp in "${FAILED_PROFILES[@]}"; do
+      failed_csv+="$(profile_display "$fp"), "
+    done
+    failed_csv="${failed_csv%, }"
+  fi
 
   reason="无"
   if ((${#CRITICALS[@]} > 0)); then
