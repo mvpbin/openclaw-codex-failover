@@ -1,5 +1,12 @@
 # 快速开始（最终版）
 
+## 0) 前置检查
+
+```bash
+openclaw --version
+codex --version   # 若不存在：npm install -g @openai/codex
+```
+
 ## 1) 安装
 
 ```bash
@@ -41,10 +48,21 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh openai-codex:acc03 banned
 codex logout && codex -c cli_auth_credentials_store='file' login --device-auth
-${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /home/rdpuser/.codex/auth.json
+${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /root/.codex/auth.json
 ```
 
-## 5) 常用开关
+## 5) systemd 用户与阈值建议（避免踩坑）
+
+```bash
+# 若机器没有 rdpuser，请改成 root（或你的实际运行用户）
+sudo sed -i 's/^User=.*/User=root/' /etc/systemd/system/openclaw-healthcheck.service
+sudo systemctl daemon-reload
+
+# 单账号场景避免误报
+sudo sed -i 's/^OCX_RECOMMENDED_MIN=.*/OCX_RECOMMENDED_MIN=1/' /etc/openclaw-healthcheck.env
+```
+
+## 6) 常用开关
 
 ```bash
 # 只检查不通知

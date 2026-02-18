@@ -39,6 +39,21 @@ export OCX_BASE_DIR=/data/openclaw
 
 ---
 
+## 前置依赖（先确认）
+
+```bash
+# 1) OpenClaw 已安装
+openclaw --version
+
+# 2) Codex CLI 已安装（device code 登录要用）
+# npm install -g @openai/codex
+codex --version
+```
+
+> 说明：`onboard/repair/healthcheck` 依赖 `scripts/import_codex_auth_to_openclaw.sh`，本仓库已内置。
+
+---
+
 ## 最小可跑（3步）
 
 ### 1) 一键安装
@@ -85,7 +100,7 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh ope
 ### C) 新账号补位
 ```bash
 codex logout && codex -c cli_auth_credentials_store='file' login --device-auth
-${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /home/rdpuser/.codex/auth.json
+${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /root/.codex/auth.json
 ```
 
 ---
@@ -97,7 +112,7 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_BASE_DIR` | `/data/openclaw` | 工作根目录 |
 | `OCX_PROVIDER` | `openai-codex` | Provider 名称 |
 | `OCX_MIN_PROFILES` | `1` | 最低账号数（低于则 CRITICAL） |
-| `OCX_RECOMMENDED_MIN` | `5` | 建议最小账号数 |
+| `OCX_RECOMMENDED_MIN` | `1` | 建议最小账号数（生产建议 >=4） |
 | `OCX_RECOMMENDED_MAX` | `12` | 建议最大账号数 |
 | `OCX_EXPIRING_HOURS` | `24` | 即将过期阈值 |
 | `OCX_NOTIFY_CHANNEL` | `telegram` | 告警渠道 |
@@ -129,6 +144,14 @@ SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/hea
 # 查看 timer
 systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 ```
+
+---
+
+## 兼容性说明（重要）
+
+- `systemd/openclaw-healthcheck.service` 默认是 `User=rdpuser`，请按你的机器改（例如 `root`）。
+- 默认 auth 路径推荐：`/root/.codex/auth.json`。如使用其他用户，请在命令里传入实际路径。
+- 若你只配置了 1 个账号池，建议将 `/etc/openclaw-healthcheck.env` 中 `OCX_RECOMMENDED_MIN=1`，避免新装阶段误报。
 
 ---
 
