@@ -12,13 +12,19 @@
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
 
-## 60 秒 Demo（录屏建议）
+## 60 秒 Demo（已提供录屏）
 
-1. `systemctl start openclaw-healthcheck.service`
-2. `cat /data/openclaw/reports/openai_codex_health_latest.json`
-3. 展示 `state: Healthy`、`discoveredCount`、`failedProfiles: []`
-4. （可选）执行 dry-run 模拟：
-   `SIMULATE_UNUSABLE=openai-codex:acc03 /data/openclaw/scripts/healthcheck_openai_codex_pool.sh --dry-run || true`
+已生成终端录屏：`docs/demo/quick-validation.cast`
+
+本地回放：
+```bash
+asciinema play docs/demo/quick-validation.cast
+```
+
+重新录制：
+```bash
+TERM=xterm-256color asciinema rec -y -q -c "bash scripts/demo_terminal_walkthrough.sh" docs/demo/quick-validation.cast
+```
 
 > 对外分享前，先按下文“隐私发布检查清单”打码。
 
