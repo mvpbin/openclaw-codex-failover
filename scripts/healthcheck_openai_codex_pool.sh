@@ -167,7 +167,7 @@ for f in "${FAILED_PROFILES[@]:-}"; do
     WARNINGS+=("circuit breaker tripped: ${f#${PROFILE_PREFIX}} for ${CB_COOLDOWN_SECONDS}s")
   fi
   short="${f#${PROFILE_PREFIX}}"
-  RELOGIN_CMDS+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $f main /home/rdpuser/.codex/auth.json")
+  RELOGIN_CMDS+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $f main /root/.codex/auth.json")
 done
 
 # reset fail count for healthy profiles
