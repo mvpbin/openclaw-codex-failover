@@ -16,6 +16,10 @@
 
 已生成终端录屏：`docs/demo/quick-validation.cast`
 
+GIF 预览：
+
+![Quick validation demo](docs/demo/demo.gif)
+
 本地回放：
 ```bash
 asciinema play docs/demo/quick-validation.cast
@@ -24,6 +28,11 @@ asciinema play docs/demo/quick-validation.cast
 重新录制：
 ```bash
 TERM=xterm-256color asciinema rec -y -q -c "bash scripts/demo_terminal_walkthrough.sh" docs/demo/quick-validation.cast
+```
+
+重新生成 GIF：
+```bash
+agg docs/demo/quick-validation.cast docs/demo/demo.gif
 ```
 
 > 对外分享前，先按下文“隐私发布检查清单”打码。
