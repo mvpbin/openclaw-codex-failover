@@ -14,7 +14,8 @@ fi
 BASE_DIR="${OCX_BASE_DIR:-/data/openclaw}"
 PROVIDER="${OCX_PROVIDER:-openai-codex}"
 PROFILE_ID="${1:-}"
-AUTH_JSON_PATH="${2:-/root/.codex/auth.json}"
+DEFAULT_AUTH_JSON_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
+AUTH_JSON_PATH="${2:-$DEFAULT_AUTH_JSON_PATH}"
 AUTH_MAP_FILE="${OCX_AUTH_MAP_FILE:-$BASE_DIR/config/openai-codex-auth-map.env}"
 
 if [[ -z "$PROFILE_ID" ]]; then

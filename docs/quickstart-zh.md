@@ -29,7 +29,13 @@ systemctl enable --now openclaw-healthcheck.timer
 '
 ```
 
-## 2) 验收
+## 2) 预检（推荐）
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/preflight_openai_codex_failover.sh
+```
+
+## 3) 验收
 
 ```bash
 sudo systemctl start openclaw-healthcheck.service
@@ -37,13 +43,13 @@ systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 cat ${OCX_BASE_DIR:-/data/openclaw}/reports/openai_codex_health_latest.json
 ```
 
-## 3) 异常时修复
+## 4) 异常时修复
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/repair_openai_codex_pool.sh
 ```
 
-## 4) 封禁时删除并补位（可选）
+## 5) 封禁时删除并补位（可选）
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/decommission_openai_codex_profile.sh openai-codex:acc03 banned
@@ -51,7 +57,7 @@ codex logout && codex -c cli_auth_credentials_store='file' login --device-auth
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-codex:acc03 /root/.codex/auth.json
 ```
 
-## 5) systemd 用户与阈值建议（避免踩坑）
+## 6) systemd 用户与阈值建议（避免踩坑）
 
 ```bash
 # 若机器没有 rdpuser，请改成 root（或你的实际运行用户）
@@ -62,7 +68,7 @@ sudo systemctl daemon-reload
 sudo sed -i 's/^OCX_RECOMMENDED_MIN=.*/OCX_RECOMMENDED_MIN=1/' /etc/openclaw-healthcheck.env
 ```
 
-## 6) 常用开关
+## 7) 常用开关
 
 ```bash
 # 只检查不通知

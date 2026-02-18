@@ -54,6 +54,14 @@ codex --version
 
 ---
 
+## 预检（推荐先跑）
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/preflight_openai_codex_failover.sh
+```
+
+---
+
 ## 最小可跑（3步）
 
 ### 1) 一键安装
@@ -124,6 +132,7 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_CB_COOLDOWN_SECONDS` | `3600` | 熔断冷却时长 |
 | `OCX_AUTO_REORDER` | `0` | 1=按健康分自动重排账号顺序 |
 | `OCX_AGENT_TIMEOUT_SECONDS` | `45` | 轻量调用超时 |
+| `OCX_CODEX_AUTH_PATH` | `/root/.codex/auth.json` | Codex 登录凭证路径（按运行用户调整） |
 | `OCX_LOG_RETENTION_DAYS` | `30` | 日志保留天数 |
 | `OCX_DRY_RUN` | `0` | 1=只检查不发消息 |
 | `OCX_AUTO_REPAIR` | `0` | 1=异常时自动触发修复 |

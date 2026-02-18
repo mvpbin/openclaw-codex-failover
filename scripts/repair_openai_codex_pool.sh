@@ -14,6 +14,7 @@ fi
 
 BASE_DIR="${OCX_BASE_DIR:-/data/openclaw}"
 REPORT_PATH="${1:-$BASE_DIR/reports/openai_codex_health_latest.json}"
+CODEX_AUTH_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
 PROVIDER="${OCX_PROVIDER:-openai-codex}"
 AUTH_MAP_FILE="${OCX_AUTH_MAP_FILE:-$BASE_DIR/config/openai-codex-auth-map.env}"
 TELEGRAM_CHANNEL="${OCX_NOTIFY_CHANNEL:-telegram}"
@@ -60,7 +61,7 @@ for profile in "${FAILED[@]}"; do
   ok=0
 
   if [[ -n "$auth_path" && -f "$auth_path" ]]; then
-    if /data/openclaw/scripts/import_codex_auth_to_openclaw.sh "$profile" main "$auth_path" >/dev/null 2>&1; then
+    if "$BASE_DIR/scripts/import_codex_auth_to_openclaw.sh" "$profile" main "$auth_path" >/dev/null 2>&1; then
       resolved+=("$profile")
       ok=1
     fi
@@ -68,16 +69,16 @@ for profile in "${FAILED[@]}"; do
 
   if [[ "$ok" -eq 0 ]]; then
     unresolved+=("$profile")
-    manual_cmds+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && /data/openclaw/scripts/import_codex_auth_to_openclaw.sh $profile main /root/.codex/auth.json")
+    manual_cmds+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $profile main $CODEX_AUTH_PATH")
     if [[ "$SUGGEST_DECOMMISSION" == "1" ]]; then
-      manual_cmds+=("$short(封禁/失效不可恢复): /data/openclaw/scripts/decommission_openai_codex_profile.sh $profile banned && # 然后添加新账号并导入")
+      manual_cmds+=("$short(封禁/失效不可恢复): $BASE_DIR/scripts/decommission_openai_codex_profile.sh $profile banned && # 然后添加新账号并导入")
     fi
   fi
 done
 
 # Always sync order after repair attempt
-if [[ -x /data/openclaw/scripts/sync_openclaw_auth_order.sh ]]; then
-  /data/openclaw/scripts/sync_openclaw_auth_order.sh "$PROVIDER" main >/dev/null 2>&1 || true
+if [[ -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
+  "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" "$PROVIDER" main >/dev/null 2>&1 || true
 fi
 
 # Optional gateway restart (usually unnecessary)

@@ -34,6 +34,7 @@ AUTO_REORDER="${OCX_AUTO_REORDER:-0}"
 CB_FAIL_THRESHOLD="${OCX_CB_FAIL_THRESHOLD:-3}"
 CB_COOLDOWN_SECONDS="${OCX_CB_COOLDOWN_SECONDS:-3600}"
 DRY_RUN="${OCX_DRY_RUN:-0}"
+CODEX_AUTH_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
 
 mkdir -p "$REPORT_DIR" "$RUN_DIR" "$CONFIG_HISTORY_DIR"
 DATE_UTC="$(date -u +%Y%m%d)"
@@ -167,7 +168,7 @@ for f in "${FAILED_PROFILES[@]:-}"; do
     WARNINGS+=("circuit breaker tripped: ${f#${PROFILE_PREFIX}} for ${CB_COOLDOWN_SECONDS}s")
   fi
   short="${f#${PROFILE_PREFIX}}"
-  RELOGIN_CMDS+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $f main /root/.codex/auth.json")
+  RELOGIN_CMDS+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $f main $CODEX_AUTH_PATH")
 done
 
 # reset fail count for healthy profiles
