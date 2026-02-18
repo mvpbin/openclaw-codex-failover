@@ -1,5 +1,7 @@
 # OpenClaw Codex 容灾机制（小白友好最终版）
 
+> 当前阶段：**Beta（可公开试用）**
+>
 > 目标：`openai-codex:*` 账号池自动巡检、异常告警、自动/手动修复、可选删除、快速补位。
 
 ---
@@ -24,6 +26,15 @@
 - ✅ 删除脚本（封禁账号下线，可选）
 - ✅ 补位脚本（新账号快速补回 accXX）
 - ✅ SLO指标文件 + 配置快照历史
+
+---
+
+## 已验证环境
+
+- Ubuntu 22.04 LTS
+- OpenClaw 2026.2.17
+- Node.js 22.x
+- Codex CLI 0.104.0
 
 ---
 
@@ -58,6 +69,32 @@ codex --version
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/preflight_openai_codex_failover.sh
+```
+
+---
+
+## 一键安装 + 一键验收（复制即用）
+
+```bash
+export OCX_BASE_DIR=/data/openclaw
+
+sudo bash -lc '
+set -e
+: "${OCX_BASE_DIR:=/data/openclaw}"
+mkdir -p "$OCX_BASE_DIR/scripts" "$OCX_BASE_DIR/reports" "$OCX_BASE_DIR/systemd" "$OCX_BASE_DIR/config"
+cp scripts/*.sh "$OCX_BASE_DIR/scripts/"
+cp systemd/* "$OCX_BASE_DIR/systemd/"
+cp -n config/openai-codex-auth-map.env.example "$OCX_BASE_DIR/config/openai-codex-auth-map.env" || true
+chmod +x "$OCX_BASE_DIR/scripts"/*.sh
+cp "$OCX_BASE_DIR/systemd/openclaw-healthcheck.service" /etc/systemd/system/
+cp "$OCX_BASE_DIR/systemd/openclaw-healthcheck.timer" /etc/systemd/system/
+cp -n openclaw-healthcheck.env.example /etc/openclaw-healthcheck.env || true
+systemctl daemon-reload
+systemctl enable --now openclaw-healthcheck.timer
+systemctl start openclaw-healthcheck.service || true
+$OCX_BASE_DIR/scripts/preflight_openai_codex_failover.sh
+cat $OCX_BASE_DIR/reports/openai_codex_health_latest.json
+'
 ```
 
 ---
@@ -168,6 +205,7 @@ systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 
 - 快速开始：`docs/quickstart-zh.md`
 - 故障排查：`docs/troubleshooting-zh.md`
+- 变更记录：`CHANGELOG.md`
 
 ## License
 
