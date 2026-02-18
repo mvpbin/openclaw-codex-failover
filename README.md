@@ -3,12 +3,24 @@
 > 当前阶段：**Beta（可公开试用）**
 >
 > 目标：`openai-codex:*` 账号池自动巡检、异常告警、自动/手动修复、可选删除、快速补位。
+>
+> 隐私原则：**脚本不上传 token，不上传账号凭据；日志默认仅保留本机。**
 
 ---
 
 ## 一句话流程
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
+
+## 60 秒 Demo（录屏建议）
+
+1. `systemctl start openclaw-healthcheck.service`
+2. `cat /data/openclaw/reports/openai_codex_health_latest.json`
+3. 展示 `state: Healthy`、`discoveredCount`、`failedProfiles: []`
+4. （可选）执行 dry-run 模拟：
+   `SIMULATE_UNUSABLE=openai-codex:acc03 /data/openclaw/scripts/healthcheck_openai_codex_pool.sh --dry-run || true`
+
+> 对外分享前，先按下文“隐私发布检查清单”打码。
 
 ---
 
@@ -198,6 +210,15 @@ systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 - `systemd/openclaw-healthcheck.service` 默认是 `User=rdpuser`，请按你的机器改（例如 `root`）。
 - 默认 auth 路径推荐：`/root/.codex/auth.json`。如使用其他用户，请在命令里传入实际路径。
 - 若你只配置了 1 个账号池，建议将 `/etc/openclaw-healthcheck.env` 中 `OCX_RECOMMENDED_MIN=1`，避免新装阶段误报。
+
+---
+
+## 隐私发布检查清单（必须）
+
+- 截图/录屏前，隐藏 Telegram chat id、邮箱、主机名、IP。
+- 不要提交 `/etc/openclaw-healthcheck.env`、`auth.json`、任何 token 文件。
+- 粘贴日志时先脱敏：账号只保留 `accXX`，不带邮箱。
+- 不公开 `OCX_NOTIFY_TARGET` 的真实个人账号，可替换为 `YOUR_TARGET_ID`。
 
 ---
 
