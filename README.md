@@ -77,6 +77,14 @@ export OCX_BASE_DIR=/data/openclaw
 
 ---
 
+## 登录机制说明（避免误解）
+
+- 当前方案采用 **Bridge 模式**：`codex login --device-auth` + `import_codex_auth_to_openclaw.sh` 导入到 OpenClaw。
+- 这不是 OpenClaw 原生命令直接完成 device code 登录，而是容灾仓库提供的可复用接入流程。
+- 因此文档中所有 device code 示例，均基于 Codex CLI 登录后再导入。
+
+---
+
 ## 前置依赖（先确认）
 
 ```bash

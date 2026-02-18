@@ -1,5 +1,13 @@
 # 快速开始（最终版）
 
+## 机制说明（先看）
+
+本项目的 device code 登录采用：
+1. `codex login --device-auth`
+2. `scripts/import_codex_auth_to_openclaw.sh` 导入到 OpenClaw profile
+
+即：这是容灾仓库提供的桥接流程（Bridge），不是 OpenClaw 原生命令直接完成。
+
 ## 0) 前置检查
 
 ```bash
