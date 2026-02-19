@@ -24,3 +24,7 @@
 
 ## 说明
 - 对于轮换 IP 代理，clean check 偶发失败属于预期行为（按策略拦截）。
+## 补充更新（可审计性）
+- 新增账号↔代理绑定审计脚本：`scripts/audit_account_proxy_binding.sh`
+- 新增最近 24h 审计汇总脚本：`scripts/report_account_proxy_audit_24h.sh`
+- 代理检测与登录流程已输出结构化审计事件，便于后续排障与追踪。

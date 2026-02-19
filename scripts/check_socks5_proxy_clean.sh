@@ -26,6 +26,7 @@ CUSTOM_CHECK_CMD="${OCX_SOCKS5_CLEAN_CHECK_CMD:-}"
 # Optimization toggles
 CACHE_TTL_SECONDS="${OCX_PROXY_CHECK_CACHE_TTL_SECONDS:-600}"
 CHECK_METRICS_FILE="${OCX_PROXY_CHECK_METRICS_FILE:-$BASE_DIR/reports/proxy-check-metrics.jsonl}"
+AUDIT_SCRIPT="${OCX_ACCOUNT_PROXY_AUDIT_SCRIPT:-$BASE_DIR/scripts/audit_account_proxy_binding.sh}"
 
 if [[ -z "$PROFILE_ID" ]]; then
   echo "usage: $0 <profileId> [proxy]" >&2
@@ -95,6 +96,13 @@ fs.appendFileSync(process.env.FILE, JSON.stringify(rec)+'\n');
 NODE
 }
 
+audit_binding(){
+  local event="$1" proxy_raw="$2" proxy_norm="$3" ip="$4" status="$5" reason="$6"
+  if [[ -x "$AUDIT_SCRIPT" ]]; then
+    "$AUDIT_SCRIPT" "$event" "$PROFILE_ID" "$proxy_raw" "$proxy_norm" "$ip" "$status" "$reason" >/dev/null 2>&1 || true
+  fi
+}
+
 cache_key(){
   local s="$1"
   printf '%s' "$s" | sha256sum | awk '{print $1}'
@@ -148,11 +156,13 @@ if ! proxy="$(normalize_proxy "$proxy_raw")"; then
   echo "unsupported proxy format for $PROFILE_ID: $proxy_raw" >&2
   echo "use socks5://..., http://... or hostname:port:username:password" >&2
   metric fail "" "unsupported_proxy_format" "$proxy_raw"
+  audit_binding "proxy_check" "$proxy_raw" "" "" "fail" "unsupported_proxy_format"
   exit 1
 fi
 if [[ -z "$proxy" ]]; then
   echo "no proxy configured for $PROFILE_ID (map: $PROXY_MAP_FILE)" >&2
   metric fail "" "proxy_missing" "$proxy"
+  audit_binding "proxy_check" "$proxy_raw" "$proxy" "" "fail" "proxy_missing"
   exit 1
 fi
 
@@ -168,6 +178,7 @@ if [[ "$CACHE_TTL_SECONDS" -gt 0 ]]; then
   if [[ -n "$cached_ip" ]]; then
     echo "proxy clean (cached): $PROFILE_ID -> $cached_ip"
     metric pass "$cached_ip" "cache_hit" "$proxy"
+    audit_binding "proxy_check" "$proxy_raw" "$proxy" "$cached_ip" "pass" "cache_hit"
     exit 0
   fi
 fi
@@ -243,10 +254,12 @@ if [[ -n "$CUSTOM_CHECK_CMD" ]]; then
     echo "proxy check failed for $PROFILE_ID: custom clean check rejected $ip" >&2
     save_cache "$proxy" 0 "$ip" "custom_check_rejected"
     metric fail "$ip" "custom_check_rejected" "$proxy"
+    audit_binding "proxy_check" "$proxy_raw" "$proxy" "$ip" "fail" "custom_check_rejected"
     exit 1
   fi
 fi
 
 save_cache "$proxy" 1 "$ip" "ok"
 metric pass "$ip" "ok" "$proxy"
+audit_binding "proxy_check" "$proxy_raw" "$proxy" "$ip" "pass" "ok"
 echo "proxy clean: $PROFILE_ID -> $ip"

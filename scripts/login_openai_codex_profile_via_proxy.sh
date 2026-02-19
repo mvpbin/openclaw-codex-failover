@@ -21,6 +21,7 @@ PROXY_POOL_FILE="${OCX_PROXY_POOL_FILE:-$BASE_DIR/config/openai-codex-proxy-pool
 FORCE_LOGOUT="${OCX_PROXY_LOGIN_FORCE_LOGOUT:-1}"
 USE_PROXY_LOGIN="${OCX_USE_PROXY_LOGIN:-1}"
 AUTO_FALLBACK="${OCX_PROXY_AUTO_FALLBACK:-1}"
+AUDIT_SCRIPT="${OCX_ACCOUNT_PROXY_AUDIT_SCRIPT:-$BASE_DIR/scripts/audit_account_proxy_binding.sh}"
 
 if [[ -z "$PROFILE_ID" ]]; then
   echo "usage: $0 <profileId> [auth.json path]" >&2
@@ -85,11 +86,19 @@ normalize_proxy(){
   return 1
 }
 
+audit_binding(){
+  local event="$1" proxy_raw="$2" proxy_norm="$3" ip="$4" status="$5" reason="$6"
+  if [[ -x "$AUDIT_SCRIPT" ]]; then
+    "$AUDIT_SCRIPT" "$event" "$PROFILE_ID" "$proxy_raw" "$proxy_norm" "$ip" "$status" "$reason" >/dev/null 2>&1 || true
+  fi
+}
+
 if [[ "$USE_PROXY_LOGIN" != "1" ]]; then
   if [[ "$FORCE_LOGOUT" == "1" ]]; then
     codex logout >/dev/null 2>&1 || true
   fi
   echo "proxy login disabled (OCX_USE_PROXY_LOGIN=$USE_PROXY_LOGIN), starting direct login for $PROFILE_ID"
+  audit_binding "login_start" "" "" "" "info" "direct_login"
   codex -c cli_auth_credentials_store='file' login --device-auth
 else
   proxy_raw="$(lookup_proxy "$PROFILE_ID")"
@@ -105,23 +114,28 @@ else
     exit 1
   fi
 
+  audit_binding "login_start" "$proxy_raw" "$proxy" "" "info" "proxy_login"
   if ! "$BASE_DIR/scripts/check_socks5_proxy_clean.sh" "$PROFILE_ID" "$proxy"; then
     if [[ "$AUTO_FALLBACK" == "1" ]]; then
       fb_raw="$(next_fallback_proxy || true)"
       if [[ -n "$fb_raw" ]]; then
         if fb_proxy="$(normalize_proxy "$fb_raw" 2>/dev/null || true)"; then
           echo "primary proxy rejected, trying fallback pool proxy for $PROFILE_ID"
+          audit_binding "proxy_fallback" "$proxy_raw" "$fb_proxy" "" "info" "primary_rejected"
           "$BASE_DIR/scripts/check_socks5_proxy_clean.sh" "$PROFILE_ID" "$fb_proxy"
           proxy="$fb_proxy"
         else
           echo "fallback proxy format invalid: $fb_raw" >&2
+          audit_binding "login_fail" "$fb_raw" "" "" "fail" "fallback_proxy_format_invalid"
           exit 1
         fi
       else
         echo "proxy rejected and no fallback proxy available" >&2
+        audit_binding "login_fail" "$proxy_raw" "$proxy" "" "fail" "no_fallback_proxy"
         exit 1
       fi
     else
+      audit_binding "login_fail" "$proxy_raw" "$proxy" "" "fail" "proxy_check_failed"
       exit 1
     fi
   fi
@@ -141,4 +155,5 @@ if [[ ! -f "$AUTH_JSON_PATH" ]]; then
 fi
 
 "$BASE_DIR/scripts/onboard_openai_codex_profile.sh" "$PROFILE_ID" "$AUTH_JSON_PATH"
+audit_binding "login_success" "${proxy_raw:-}" "${proxy:-}" "" "pass" "onboard_ok"
 echo "proxy login + onboard done: $PROFILE_ID"

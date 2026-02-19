@@ -24,3 +24,8 @@
 
 ## Notes
 - Rotating proxies may fail clean checks intermittently by design; this is expected behavior.
+
+## Additional (auditability)
+- Added strict account↔proxy binding audit logger: `scripts/audit_account_proxy_binding.sh`
+- Added 24h audit summary report script: `scripts/report_account_proxy_audit_24h.sh`
+- `check_socks5_proxy_clean.sh` and proxy login flow now emit structured audit events for easier root-cause analysis.
