@@ -238,6 +238,7 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_PROXY_CHECK_CACHE_TTL_SECONDS` | `600` | 代理 clean 检测缓存 TTL（秒） |
 | `OCX_PROXY_CHECK_CONCURRENCY` | `5` | 批量代理检测并发度 |
 | `OCX_PROXY_CHECK_METRICS_FILE` | `/data/openclaw/reports/proxy-check-metrics.jsonl` | 代理检测结果落盘文件 |
+| `OCX_ACCOUNT_PROXY_AUDIT_FILE` | `/data/openclaw/reports/account-proxy-audit.jsonl` | 账号↔代理绑定审计日志文件 |
 
 ---
 
@@ -252,7 +253,23 @@ SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/hea
 
 # 查看 timer
 systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
+
+# 查看账号↔代理审计日志
+ tail -n 30 /data/openclaw/reports/account-proxy-audit.jsonl
+
+# 最近24h按profile成功率+失败TopN
+/data/openclaw/scripts/report_account_proxy_audit_24h.sh 24 5
 ```
+
+---
+
+## 审计与追踪（新增）
+
+- 绑定审计脚本：`scripts/audit_account_proxy_binding.sh`
+- 24h 汇总脚本：`scripts/report_account_proxy_audit_24h.sh`
+- 默认审计日志文件：`/data/openclaw/reports/account-proxy-audit.jsonl`
+
+> 建议每次批量导入后跑一次 24h 汇总，快速定位失败账号与失败原因 TopN。
 
 ---
 
