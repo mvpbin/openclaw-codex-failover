@@ -134,6 +134,16 @@ cat $OCX_BASE_DIR/reports/openai_codex_health_latest.json
 
 ---
 
+## 小白推荐入口（先用这个）
+
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_profiles_wizard.sh
+```
+
+> 向导支持：单个导入、批量导入、每次询问是否使用代理、代理检测与导入联动。
+
+---
+
 ## 最小可跑（3步）
 
 ### 1) 一键安装
@@ -185,6 +195,18 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 
 ---
 
+## 代理格式说明（统一）
+
+支持以下三种格式：
+
+1. `host:port:username:password`
+2. `socks5h://user:pass@host:port`（推荐 socks5h）
+3. `http://user:pass@host:port`（你当前默认方案）
+
+> 如果使用第 1 种，会按 `OCX_PROXY_DEFAULT_SCHEME` 自动补全协议。
+
+---
+
 ## 配置总表（OCX_*）
 
 | 变量 | 默认值 | 作用 |
@@ -210,6 +232,12 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_AUTO_REPAIR` | `0` | 1=异常时自动触发修复 |
 | `OCX_REPAIR_MIN_INTERVAL_SECONDS` | `1800` | 自动修复最短间隔 |
 | `OCX_SUGGEST_DECOMMISSION` | `0` | 1=在修复建议中显示删除命令 |
+| `OCX_USE_PROXY_LOGIN` | `1` | 1=使用代理登录, 0=直连登录 |
+| `OCX_PROXY_AUTO_FALLBACK` | `1` | 1=主代理失败时尝试备用代理池 |
+| `OCX_PROXY_DEFAULT_SCHEME` | `socks5h`/`http` | host:port:user:pass 这种格式自动补全的协议 |
+| `OCX_PROXY_CHECK_CACHE_TTL_SECONDS` | `600` | 代理 clean 检测缓存 TTL（秒） |
+| `OCX_PROXY_CHECK_CONCURRENCY` | `5` | 批量代理检测并发度 |
+| `OCX_PROXY_CHECK_METRICS_FILE` | `/data/openclaw/reports/proxy-check-metrics.jsonl` | 代理检测结果落盘文件 |
 
 ---
 
@@ -225,6 +253,19 @@ SIMULATE_UNUSABLE=openai-codex:acc03 ${OCX_BASE_DIR:-/data/openclaw}/scripts/hea
 # 查看 timer
 systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 ```
+
+---
+
+## 常见报错与排查
+
+### 1) `auth.json missing required access/refresh token fields`
+- 原因：导入脚本读取到不兼容的 auth.json 结构（旧版脚本常见）。
+- 处理：更新到本仓库当前版本脚本；并确认 auth 文件路径正确。
+
+### 2) `custom clean check rejected ...`
+- 原因：代理 IP 被你的 clean 策略拒绝（风控分数、年龄、代理属性等）。
+- 这通常是**策略拦截**，不是脚本损坏。
+- 处理：换下一条代理，或调整 clean check 阈值。
 
 ---
 
