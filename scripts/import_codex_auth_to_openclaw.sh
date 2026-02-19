@@ -35,18 +35,19 @@ const authProfilesPath = process.env.AUTH_PROFILES_PATH;
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const now = Date.now();
 
-const src = readJson(authJsonPath);
+const srcRaw = readJson(authJsonPath);
+const src = srcRaw?.openai && typeof srcRaw.openai === 'object' ? srcRaw.openai : srcRaw;
 
 // Accept common token field variants
-const access = src.access_token || src.accessToken || src.access || src.token || src?.credentials?.access_token;
-const refresh = src.refresh_token || src.refreshToken || src.refresh || src?.credentials?.refresh_token;
+const access = src.access_token || src.accessToken || src.access || src.token || src?.credentials?.access_token || srcRaw?.tokens?.access_token;
+const refresh = src.refresh_token || src.refreshToken || src.refresh || src?.credentials?.refresh_token || srcRaw?.tokens?.refresh_token;
 
-let expires = src.expires_at || src.expiresAt || src.expires || src.exp || src?.credentials?.expires_at;
+let expires = src.expires_at || src.expiresAt || src.expires || src.exp || src?.credentials?.expires_at || srcRaw?.tokens?.expires_at;
 if (typeof expires === 'string' && /^\d+$/.test(expires)) expires = Number(expires);
 if (typeof expires === 'number' && expires < 1e12) expires = expires * 1000; // seconds -> ms
 if (!expires || Number.isNaN(expires)) expires = now + 24 * 3600 * 1000;
 
-const accountId = src.account_id || src.accountId || src.user_id || src.userId || src.sub || src?.user?.id || 'unknown';
+const accountId = src.account_id || src.accountId || src.user_id || src.userId || src.sub || src?.user?.id || srcRaw?.tokens?.account_id || 'unknown';
 
 if (!access || !refresh) {
   throw new Error('auth.json missing required access/refresh token fields');

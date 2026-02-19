@@ -1,0 +1,26 @@
+# Release Notes — 2026-02-19
+
+## Highlights
+- Added beginner-friendly onboarding wizard: `scripts/onboard_profiles_wizard.sh`
+- Added batch proxy health checker with concurrency: `scripts/check_proxy_pool_batch.sh`
+- Added proxy login mode toggle: `OCX_USE_PROXY_LOGIN`
+- Added fallback proxy option: `OCX_PROXY_AUTO_FALLBACK`
+- Added proxy check cache + metrics:
+  - `OCX_PROXY_CHECK_CACHE_TTL_SECONDS`
+  - `OCX_PROXY_CHECK_METRICS_FILE`
+  - `OCX_PROXY_CHECK_CONCURRENCY`
+- Improved auth import compatibility for modern auth JSON layouts (including `openai` nested structure)
+- Proxy format support now includes:
+  - `host:port:username:password`
+  - `socks5://...` / `socks5h://...`
+  - `http://...` / `https://...`
+
+## Validation Summary
+- Script syntax checks: pass
+- Preflight: `ok=19 warn=0 err=0`
+- Proxy batch smoke test: pass
+- Healthcheck dry-run state transition: pass (`Degraded` on simulated failure)
+- Auth import regression (new auth layout): pass
+
+## Notes
+- Rotating proxies may fail clean checks intermittently by design; this is expected behavior.
