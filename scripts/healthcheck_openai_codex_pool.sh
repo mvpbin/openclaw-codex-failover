@@ -292,11 +292,13 @@ EMAIL_MAP_JOINED="$(for k in "${!PROFILE_EMAIL_MAP[@]}"; do echo "$k=${PROFILE_E
 const fs=require('fs');
 const split=s=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
 const mapFrom=(s)=>{const o={};for(const l of split(s)){const i=l.indexOf('=');if(i>0)o[l.slice(0,i).trim()]=l.slice(i+1).trim();}return o;};
-const failed=split(process.env.FAILED_JOINED);
+const failedRaw=split(process.env.FAILED_JOINED);
 const emailMap=mapFrom(process.env.EMAIL_MAP_JOINED); const scoreMap=mapFrom(process.env.SCORE_JOINED);
+const state=String(process.env.STATE||'');
+const failed=(state==='Healthy' || state==='Recovered') ? [] : failedRaw;
 const report={
   ts:process.env.TS_UTC,
-  state:process.env.STATE,
+  state,
   anomalyClass:process.env.ANOMALY_CLASS,
   provider:process.env.PROVIDER,
   discoveredProfiles:split(process.env.ALL_PROFILES_JOINED),
@@ -329,14 +331,18 @@ log "report: $LATEST_JSON"
 # alerting (dedup + burst + hourly remind)
 if [[ "$DRY_RUN" != "1" ]]; then
   level="PASS"; ((exit_code==2)) && level="CRITICAL"; ((exit_code==1)) && level="WARN"
+  # hard guard: healthy/recovered must never alert as warning/critical
+  if [[ "$state" == "Healthy" || "$state" == "Recovered" ]]; then
+    level="PASS"
+  fi
   failed_csv="none"
   if ((${#FAILED_PROFILES[@]} > 0)); then failed_csv=""; for fp in "${FAILED_PROFILES[@]}"; do failed_csv+="$(profile_display "$fp"), "; done; failed_csv="${failed_csv%, }"; fi
   reason="无"; ((${#CRITICALS[@]} > 0)) && reason="$(printf '%s; ' "${CRITICALS[@]}"|sed 's/; $//')"; ((${#CRITICALS[@]}==0 && ${#WARNINGS[@]}>0)) && reason="$(printf '%s; ' "${WARNINGS[@]}"|sed 's/; $//')"
-  [[ "$level" == "PASS" ]] && icon="✅" && level_cn="健康"
-  [[ "$level" == "WARN" ]] && icon="⚠️" && level_cn="预警"
-  [[ "$level" == "CRITICAL" ]] && icon="🚨" && level_cn="严重"
+  [[ "$level" == "PASS" ]] && icon="✅" && level_cn="健康" && title="[恢复/正常]"
+  [[ "$level" == "WARN" ]] && icon="⚠️" && level_cn="预警" && title="[异常]"
+  [[ "$level" == "CRITICAL" ]] && icon="🚨" && level_cn="严重" && title="[严重异常]"
   action_line="无"; ((${#RELOGIN_CMDS[@]} > 0)) && action_line="请仅重登失效账号（见报告 reloginCommands）"
-  msg="${icon} OpenClaw 健康检查（${PROVIDER}）\n状态：${level_cn} (${level})\n阶段：${state}\n账号数：${#ALL_PROFILES[@]}\n失效账号：${failed_csv}\n异常原因：${reason}\n处理建议：${action_line}\n报告：${LATEST_JSON}"
+  msg="${icon} ${title} OpenClaw 健康检查（${PROVIDER}）\n状态：${level_cn} (${level})\n阶段：${state}\n账号数：${#ALL_PROFILES[@]}\n失效账号：${failed_csv}\n异常原因：${reason}\n处理建议：${action_line}\n报告：${LATEST_JSON}"
 
   prev_level="PASS"; prev_alert_ts=0; prev_signature=""
   if [[ -f "$ALERT_STATE_FILE" ]]; then

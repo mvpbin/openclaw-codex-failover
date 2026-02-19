@@ -28,3 +28,7 @@
 - 新增账号↔代理绑定审计脚本：`scripts/audit_account_proxy_binding.sh`
 - 新增最近 24h 审计汇总脚本：`scripts/report_account_proxy_audit_24h.sh`
 - 代理检测与登录流程已输出结构化审计事件，便于后续排障与追踪。
+
+## 补充修复（字段与消息一致性）
+- 修复报告字段一致性：当状态为 `Healthy/Recovered` 时，`failedProfiles` 强制为空。
+- 修复告警图标一致性：健康/恢复状态强制使用 `✅`，避免出现误导性的 ⚠️ 图标。
