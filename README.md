@@ -250,6 +250,8 @@ systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 - 快速开始：`docs/quickstart-zh.md`
 - 故障排查：`docs/troubleshooting-zh.md`
 - 变更记录：`CHANGELOG.md`
+- Release Notes (EN): `docs/release-notes-2026-02-19.md`
+- 发布说明（中文）: `docs/release-notes-2026-02-19.zh-CN.md`
 
 ## License
 
