@@ -25,14 +25,32 @@ ALERT_STATE_FILE="${OCX_ALERT_STATE_FILE:-$RUN_DIR/openai_codex_alert_state.json
 POOL_STATE_FILE="${OCX_POOL_STATE_FILE:-$RUN_DIR/openai_codex_pool_state.json}"
 SLO_FILE="${OCX_SLO_FILE:-$REPORT_DIR/openai_codex_slo_metrics.json}"
 CONFIG_HISTORY_DIR="${OCX_CONFIG_HISTORY_DIR:-$BASE_DIR/config/history}"
-ALERT_BURST_COUNT="${OCX_ALERT_BURST_COUNT:-3}"
-ALERT_REMIND_SECONDS="${OCX_ALERT_REMIND_SECONDS:-3600}"
-ALERT_DEDUP_SECONDS="${OCX_ALERT_DEDUP_SECONDS:-900}"
+ALERT_BURST_COUNT="${OCX_ALERT_BURST_COUNT:-1}"
+ALERT_REMIND_SECONDS="${OCX_ALERT_REMIND_SECONDS:-21600}"
+ALERT_DEDUP_SECONDS="${OCX_ALERT_DEDUP_SECONDS:-3600}"
+ALERT_SUPPRESS_COOLDOWN_ONLY="${OCX_ALERT_SUPPRESS_COOLDOWN_ONLY:-1}"
 AUTO_REPAIR="${OCX_AUTO_REPAIR:-0}"
 REPAIR_MIN_INTERVAL="${OCX_REPAIR_MIN_INTERVAL_SECONDS:-1800}"
 AUTO_REORDER="${OCX_AUTO_REORDER:-0}"
 CB_FAIL_THRESHOLD="${OCX_CB_FAIL_THRESHOLD:-3}"
 CB_COOLDOWN_SECONDS="${OCX_CB_COOLDOWN_SECONDS:-3600}"
+# Smarter circuit-breaker tuning by failure type
+CB_FAIL_THRESHOLD_AUTH="${OCX_CB_FAIL_THRESHOLD_AUTH:-3}"
+CB_FAIL_THRESHOLD_NETWORK="${OCX_CB_FAIL_THRESHOLD_NETWORK:-5}"
+CB_FAIL_THRESHOLD_OTHER="${OCX_CB_FAIL_THRESHOLD_OTHER:-5}"
+CB_COOLDOWN_SECONDS_AUTH="${OCX_CB_COOLDOWN_SECONDS_AUTH:-3600}"
+CB_COOLDOWN_SECONDS_NETWORK="${OCX_CB_COOLDOWN_SECONDS_NETWORK:-900}"
+CB_COOLDOWN_SECONDS_OTHER="${OCX_CB_COOLDOWN_SECONDS_OTHER:-900}"
+# Half-open probe: allow early re-check near cooldown end
+CB_HALF_OPEN_WINDOW_SECONDS="${OCX_CB_HALF_OPEN_WINDOW_SECONDS:-300}"
+# Optional per-profile override for default profile
+CB_FAIL_THRESHOLD_DEFAULT="${OCX_CB_FAIL_THRESHOLD_DEFAULT:-0}"
+CB_COOLDOWN_SECONDS_DEFAULT="${OCX_CB_COOLDOWN_SECONDS_DEFAULT:-0}"
+# Cooldown jitter + failcount decay
+CB_COOLDOWN_JITTER_MIN_SECONDS="${OCX_CB_COOLDOWN_JITTER_MIN_SECONDS:-30}"
+CB_COOLDOWN_JITTER_MAX_SECONDS="${OCX_CB_COOLDOWN_JITTER_MAX_SECONDS:-120}"
+CB_FAILCOUNT_DECAY_ENABLED="${OCX_CB_FAILCOUNT_DECAY_ENABLED:-1}"
+CB_FAILCOUNT_DECAY_INTERVAL_SECONDS="${OCX_CB_FAILCOUNT_DECAY_INTERVAL_SECONDS:-1800}"
 DRY_RUN="${OCX_DRY_RUN:-0}"
 CODEX_AUTH_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
 
@@ -90,6 +108,24 @@ NODE
 )
 fi
 
+# failcount decay: reduce historical penalties over time
+if [[ "$CB_FAILCOUNT_DECAY_ENABLED" == "1" && "$CB_FAILCOUNT_DECAY_INTERVAL_SECONDS" =~ ^[0-9]+$ && $CB_FAILCOUNT_DECAY_INTERVAL_SECONDS -gt 0 ]]; then
+  for k in "${!PROFILE_FAILCOUNT[@]}"; do
+    fc="${PROFILE_FAILCOUNT[$k]:-0}"
+    cu="${PROFILE_COOLDOWN_UNTIL[$k]:-0}"
+    [[ "$fc" =~ ^[0-9]+$ ]] || continue
+    [[ "$cu" =~ ^[0-9]+$ ]] || cu=0
+    if (( fc > 0 && cu > 0 && NOW_TS > cu )); then
+      elapsed=$((NOW_TS - cu))
+      decay_steps=$((elapsed / CB_FAILCOUNT_DECAY_INTERVAL_SECONDS))
+      if (( decay_steps > 0 )); then
+        new_fc=$((fc - decay_steps)); (( new_fc < 0 )) && new_fc=0
+        PROFILE_FAILCOUNT["$k"]="$new_fc"
+      fi
+    fi
+  done
+fi
+
 status_json="$(openclaw models status --json 2>/dev/null || true)"
 if [[ -z "$status_json" ]]; then CRITICALS+=("openclaw models status --json failed"); fi
 
@@ -130,9 +166,15 @@ while IFS= read -r line; do
   ALL_PROFILES+=("$pid"); PROFILE_REMAINING["$pid"]="$rem"
   cooldown_until="${PROFILE_COOLDOWN_UNTIL[$pid]:-0}"
   if (( cooldown_until > NOW_TS )); then
-    COOLDOWN_PROFILES+=("$pid")
-    WARNINGS+=("cooldown active: ${pid#${PROFILE_PREFIX}} until $(date -u -d @${cooldown_until} +%H:%M:%S 2>/dev/null || echo ${cooldown_until})")
-    continue
+    remain_cd=$((cooldown_until - NOW_TS))
+    # half-open: near cooldown end we probe once instead of hard skipping
+    if (( remain_cd > CB_HALF_OPEN_WINDOW_SECONDS )); then
+      COOLDOWN_PROFILES+=("$pid")
+      WARNINGS+=("cooldown active: ${pid#${PROFILE_PREFIX}} until $(date -u -d @${cooldown_until} +%H:%M:%S 2>/dev/null || echo ${cooldown_until})")
+      continue
+    else
+      WARNINGS+=("half-open probe: ${pid#${PROFILE_PREFIX}} cooldown remaining ${remain_cd}s")
+    fi
   fi
   if [[ "$rem" =~ ^-?[0-9]+$ ]]; then
     if (( rem < 0 )); then FAILED_PROFILES+=("$pid")
@@ -147,6 +189,12 @@ NODE
 
 for u in "${UNUSABLE_PROFILES[@]:-}"; do [[ -n "$u" ]] && FAILED_PROFILES+=("$u"); done
 if ((${#FAILED_PROFILES[@]} > 0)); then mapfile -t FAILED_PROFILES < <(printf '%s\n' "${FAILED_PROFILES[@]}" | awk 'NF' | sort -u); fi
+
+# coarse error hints from current status/probe payload (used to improve breaker typing)
+STATUS_HAS_AUTH=0
+STATUS_HAS_NETWORK=0
+if echo "$status_json" | grep -Eqi 'expired|invalid|oauth|unauth|forbidden|banned|account'; then STATUS_HAS_AUTH=1; fi
+if echo "$status_json" | grep -Eqi 'timeout|connect|dns|network|tls|econn|enotfound|proxy'; then STATUS_HAS_NETWORK=1; fi
 
 # scoring + circuit breaker counters
 for p in "${ALL_PROFILES[@]:-}"; do
@@ -163,9 +211,45 @@ done
 for f in "${FAILED_PROFILES[@]:-}"; do
   [[ -z "$f" ]] && continue
   cur="${PROFILE_FAILCOUNT[$f]:-0}"; cur=$((cur+1)); PROFILE_FAILCOUNT["$f"]="$cur"
-  if (( cur >= CB_FAIL_THRESHOLD )); then
-    PROFILE_COOLDOWN_UNTIL["$f"]=$((NOW_TS + CB_COOLDOWN_SECONDS))
-    WARNINGS+=("circuit breaker tripped: ${f#${PROFILE_PREFIX}} for ${CB_COOLDOWN_SECONDS}s")
+
+  # smarter failure typing: per-profile expiry first, then status hints (auth/network), then fallback other
+  rem="${PROFILE_REMAINING[$f]:-0}"
+  fail_type="other"
+  threshold="$CB_FAIL_THRESHOLD_OTHER"
+  cooldown_secs="$CB_COOLDOWN_SECONDS_OTHER"
+  if [[ "$rem" =~ ^-?[0-9]+$ ]] && (( rem < 0 )); then
+    fail_type="auth"
+    threshold="$CB_FAIL_THRESHOLD_AUTH"
+    cooldown_secs="$CB_COOLDOWN_SECONDS_AUTH"
+  elif (( STATUS_HAS_NETWORK == 1 && STATUS_HAS_AUTH == 0 )); then
+    fail_type="network"
+    threshold="$CB_FAIL_THRESHOLD_NETWORK"
+    cooldown_secs="$CB_COOLDOWN_SECONDS_NETWORK"
+  elif (( STATUS_HAS_AUTH == 1 )); then
+    fail_type="auth"
+    threshold="$CB_FAIL_THRESHOLD_AUTH"
+    cooldown_secs="$CB_COOLDOWN_SECONDS_AUTH"
+  fi
+
+  # optional stricter/looser override for default profile
+  if [[ "$f" == "${PROFILE_PREFIX}default" ]]; then
+    (( CB_FAIL_THRESHOLD_DEFAULT > 0 )) && threshold="$CB_FAIL_THRESHOLD_DEFAULT"
+    (( CB_COOLDOWN_SECONDS_DEFAULT > 0 )) && cooldown_secs="$CB_COOLDOWN_SECONDS_DEFAULT"
+  fi
+
+  if (( cur >= threshold )); then
+    jitter=0
+    if [[ "$CB_COOLDOWN_JITTER_MIN_SECONDS" =~ ^[0-9]+$ && "$CB_COOLDOWN_JITTER_MAX_SECONDS" =~ ^[0-9]+$ && $CB_COOLDOWN_JITTER_MAX_SECONDS -ge $CB_COOLDOWN_JITTER_MIN_SECONDS ]]; then
+      if (( CB_COOLDOWN_JITTER_MAX_SECONDS > CB_COOLDOWN_JITTER_MIN_SECONDS )); then
+        span=$((CB_COOLDOWN_JITTER_MAX_SECONDS - CB_COOLDOWN_JITTER_MIN_SECONDS + 1))
+        jitter=$((CB_COOLDOWN_JITTER_MIN_SECONDS + RANDOM % span))
+      else
+        jitter=$CB_COOLDOWN_JITTER_MIN_SECONDS
+      fi
+    fi
+    final_cooldown=$((cooldown_secs + jitter))
+    PROFILE_COOLDOWN_UNTIL["$f"]=$((NOW_TS + final_cooldown))
+    WARNINGS+=("circuit breaker tripped: ${f#${PROFILE_PREFIX}} (${fail_type}) for ${final_cooldown}s")
   fi
   short="${f#${PROFILE_PREFIX}}"
   RELOGIN_CMDS+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $f main $CODEX_AUTH_PATH")
@@ -353,7 +437,18 @@ if [[ "$DRY_RUN" != "1" ]]; then
   signature="$level|$ANOMALY_CLASS|$failed_csv"
   send_once(){ openclaw message send --channel "$TELEGRAM_CHANNEL" --target "$TELEGRAM_TARGET" --message "$1" >/dev/null 2>&1 || true; }
 
-  if [[ "$level" != "PASS" ]]; then
+  # Reduce noise: optional suppression when warning is only cooldown-active signals
+  cooldown_only=0
+  if [[ "$ALERT_SUPPRESS_COOLDOWN_ONLY" == "1" && "$level" == "WARN" && ${#CRITICALS[@]} -eq 0 && ${#WARNINGS[@]} -gt 0 ]]; then
+    cooldown_only=1
+    for w in "${WARNINGS[@]}"; do
+      [[ "$w" == cooldown\ active:* ]] || { cooldown_only=0; break; }
+    done
+  fi
+
+  if [[ "$cooldown_only" == "1" ]]; then
+    : # suppress cooldown-only warnings to avoid alert spam
+  elif [[ "$level" != "PASS" ]]; then
     if [[ "$prev_level" == "PASS" || "$prev_signature" != "$signature" ]]; then
       i=1; while (( i <= ALERT_BURST_COUNT )); do send_once "$msg\n第 ${i}/${ALERT_BURST_COUNT} 次告警"; i=$((i+1)); done
       echo "{\"level\":\"$level\",\"lastAlertTs\":$NOW_TS,\"signature\":\"$signature\"}" > "$ALERT_STATE_FILE"

@@ -33,3 +33,11 @@
 ## Additional (state/message consistency fix)
 - Fixed report consistency: when state is `Healthy`/`Recovered`, `failedProfiles` is now forced empty.
 - Fixed alert icon logic: healthy/recovered state is forced to PASS icon (`✅`), preventing stale warning icon confusion.
+
+## Additional (smart circuit-breaker v2)
+- Added failure-type-aware breaker classes: `auth` / `network` / `other` with separate thresholds/cooldowns.
+- Added half-open probe window near cooldown expiry for earlier recovery.
+- Added default-profile specific threshold/cooldown override.
+- Added cooldown jitter to avoid synchronized retry storms.
+- Added fail-count decay over time to reduce long-tail penalties after transient failures.
+- Alert-noise tuning: cooldown-only warning suppression and wider dedup/remind windows.

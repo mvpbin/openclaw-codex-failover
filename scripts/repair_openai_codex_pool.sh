@@ -22,6 +22,8 @@ TELEGRAM_TARGET="${OCX_NOTIFY_TARGET:-182211955}"
 DO_NOTIFY="${OCX_REPAIR_NOTIFY:-1}"
 DO_RESTART_GATEWAY="${OCX_REPAIR_RESTART_GATEWAY:-0}"
 SUGGEST_DECOMMISSION="${OCX_SUGGEST_DECOMMISSION:-0}"
+REQUIRE_SOCKS5_LOGIN="${OCX_REQUIRE_SOCKS5_LOGIN:-1}"
+USE_PROXY_LOGIN="${OCX_USE_PROXY_LOGIN:-1}"
 
 if [[ ! -f "$REPORT_PATH" ]]; then
   echo "report not found: $REPORT_PATH" >&2
@@ -69,7 +71,11 @@ for profile in "${FAILED[@]}"; do
 
   if [[ "$ok" -eq 0 ]]; then
     unresolved+=("$profile")
-    manual_cmds+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $profile main $CODEX_AUTH_PATH")
+    if [[ "$REQUIRE_SOCKS5_LOGIN" == "1" && "$USE_PROXY_LOGIN" == "1" && -x "$BASE_DIR/scripts/login_openai_codex_profile_via_proxy.sh" ]]; then
+      manual_cmds+=("$short: $BASE_DIR/scripts/login_openai_codex_profile_via_proxy.sh $profile $CODEX_AUTH_PATH")
+    else
+      manual_cmds+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $profile main $CODEX_AUTH_PATH")
+    fi
     if [[ "$SUGGEST_DECOMMISSION" == "1" ]]; then
       manual_cmds+=("$short(封禁/失效不可恢复): $BASE_DIR/scripts/decommission_openai_codex_profile.sh $profile banned && # 然后添加新账号并导入")
     fi
@@ -77,6 +83,36 @@ for profile in "${FAILED[@]}"; do
 done
 
 # Always sync order after repair attempt
+# Auto promote: if default remains unresolved, move it to the end of order to reduce repeated primary failures.
+if ((${#unresolved[@]} > 0)); then
+  has_default_unresolved=0
+  for p in "${unresolved[@]}"; do
+    [[ "$p" == "${PROVIDER}:default" ]] && has_default_unresolved=1 && break
+  done
+  if [[ "$has_default_unresolved" == "1" ]]; then
+    AUTH_PROFILES_PATH="/root/.openclaw/agents/main/agent/auth-profiles.json"
+    if [[ -f "$AUTH_PROFILES_PATH" ]]; then
+      PROVIDER="$PROVIDER" node - <<'NODE' >/dev/null 2>&1 || true
+const fs=require('fs');
+const p='/root/.openclaw/agents/main/agent/auth-profiles.json';
+const provider=process.env.PROVIDER||'openai-codex';
+const j=JSON.parse(fs.readFileSync(p,'utf8'));
+const order=(j.order&&Array.isArray(j.order[provider]))?j.order[provider]:[];
+const def=`${provider}:default`;
+const reordered=[...order.filter(x=>x!==def), ...(order.includes(def)?[def]:[])];
+if(!j.order) j.order={};
+j.order[provider]=reordered;
+if(j.lastGood && j.lastGood[provider]===def){
+  const first=reordered.find(x=>x!==def);
+  if(first) j.lastGood[provider]=first;
+}
+fs.writeFileSync(p,JSON.stringify(j,null,2));
+NODE
+      manual_cmds+=("default unresolved: moved ${PROVIDER}:default to end of order")
+    fi
+  fi
+fi
+
 if [[ -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
   "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" "$PROVIDER" main >/dev/null 2>&1 || true
 fi
