@@ -303,6 +303,35 @@ systemctl status openclaw-healthcheck.timer --no-pager -l | sed -n '1,20p'
 
 ---
 
+## 智能熔断 v2（2026-02-22 更新）
+
+新增能力：
+- 按失败类型分级熔断：`auth / network / other`
+- 半开探测：冷却尾段提前探测恢复
+- default 账号独立阈值/冷却
+- 冷却抖动：错峰解冻，避免同秒重试风暴
+- 失败计数衰减：降低短时抖动长期影响
+
+推荐新增配置（`/etc/openclaw-healthcheck.env`）：
+
+```env
+OCX_CB_FAIL_THRESHOLD_AUTH=3
+OCX_CB_FAIL_THRESHOLD_NETWORK=5
+OCX_CB_FAIL_THRESHOLD_OTHER=5
+OCX_CB_COOLDOWN_SECONDS_AUTH=3600
+OCX_CB_COOLDOWN_SECONDS_NETWORK=600
+OCX_CB_COOLDOWN_SECONDS_OTHER=900
+OCX_CB_HALF_OPEN_WINDOW_SECONDS=300
+OCX_CB_FAIL_THRESHOLD_DEFAULT=4
+OCX_CB_COOLDOWN_SECONDS_DEFAULT=1800
+OCX_CB_COOLDOWN_JITTER_MIN_SECONDS=30
+OCX_CB_COOLDOWN_JITTER_MAX_SECONDS=120
+OCX_CB_FAILCOUNT_DECAY_ENABLED=1
+OCX_CB_FAILCOUNT_DECAY_INTERVAL_SECONDS=1800
+```
+
+如果你看到大量 `cooldown active` 告警，先确认是否为短时网络抖动；v2 已内置降噪与恢复优化。
+
 ## 相关文档
 
 - 快速开始：`docs/quickstart-zh.md`
