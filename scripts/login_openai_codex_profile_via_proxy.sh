@@ -21,6 +21,8 @@ PROXY_POOL_FILE="${OCX_PROXY_POOL_FILE:-$BASE_DIR/config/openai-codex-proxy-pool
 FORCE_LOGOUT="${OCX_PROXY_LOGIN_FORCE_LOGOUT:-1}"
 USE_PROXY_LOGIN="${OCX_USE_PROXY_LOGIN:-1}"
 AUTO_FALLBACK="${OCX_PROXY_AUTO_FALLBACK:-1}"
+FALLBACK_CURSOR_FILE="${OCX_PROXY_POOL_CURSOR_FILE:-$BASE_DIR/run/proxy-pool-cursor.idx}"
+FALLBACK_PERSIST_MAP="${OCX_PROXY_FALLBACK_PERSIST_MAP:-1}"
 AUDIT_SCRIPT="${OCX_ACCOUNT_PROXY_AUDIT_SCRIPT:-$BASE_DIR/scripts/audit_account_proxy_binding.sh}"
 
 if [[ -z "$PROFILE_ID" ]]; then
@@ -50,10 +52,36 @@ lookup_proxy(){
   echo "$p"
 }
 
-next_fallback_proxy(){
-  if [[ -f "$PROXY_POOL_FILE" ]]; then
-    awk 'NF && $1 !~ /^#/{print; exit}' "$PROXY_POOL_FILE"
+upsert_map(){
+  local profile="$1" proxy="$2"
+  mkdir -p "$(dirname "$PROXY_MAP_FILE")"
+  [[ -f "$PROXY_MAP_FILE" ]] || touch "$PROXY_MAP_FILE"
+  if grep -q "^${profile}=" "$PROXY_MAP_FILE"; then
+    sed -i "s#^${profile}=.*#${profile}=${proxy}#" "$PROXY_MAP_FILE"
+  else
+    echo "${profile}=${proxy}" >> "$PROXY_MAP_FILE"
   fi
+}
+
+next_fallback_proxy(){
+  [[ -f "$PROXY_POOL_FILE" ]] || return 1
+
+  mapfile -t _pool < <(awk 'NF && $1 !~ /^#/{print}' "$PROXY_POOL_FILE")
+  local n="${#_pool[@]}"
+  (( n > 0 )) || return 1
+
+  mkdir -p "$(dirname "$FALLBACK_CURSOR_FILE")"
+  local idx=0
+  if [[ -f "$FALLBACK_CURSOR_FILE" ]]; then
+    idx="$(cat "$FALLBACK_CURSOR_FILE" 2>/dev/null || echo 0)"
+  fi
+  [[ "$idx" =~ ^[0-9]+$ ]] || idx=0
+  idx=$(( idx % n ))
+
+  local proxy="${_pool[$idx]}"
+  local next=$(( (idx + 1) % n ))
+  echo "$next" > "$FALLBACK_CURSOR_FILE"
+  echo "$proxy"
 }
 
 urlencode(){
@@ -124,6 +152,10 @@ else
           audit_binding "proxy_fallback" "$proxy_raw" "$fb_proxy" "" "info" "primary_rejected"
           "$BASE_DIR/scripts/check_socks5_proxy_clean.sh" "$PROFILE_ID" "$fb_proxy"
           proxy="$fb_proxy"
+          if [[ "$FALLBACK_PERSIST_MAP" == "1" ]]; then
+            upsert_map "$PROFILE_ID" "$fb_raw"
+            echo "fallback proxy persisted to map for $PROFILE_ID"
+          fi
         else
           echo "fallback proxy format invalid: $fb_raw" >&2
           audit_binding "login_fail" "$fb_raw" "" "" "fail" "fallback_proxy_format_invalid"
