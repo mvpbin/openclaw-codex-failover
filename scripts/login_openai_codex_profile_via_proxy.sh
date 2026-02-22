@@ -64,9 +64,26 @@ upsert_map(){
 }
 
 next_fallback_proxy(){
-  [[ -f "$PROXY_POOL_FILE" ]] || return 1
+  local candidates=()
 
-  mapfile -t _pool < <(awk 'NF && $1 !~ /^#/{print}' "$PROXY_POOL_FILE")
+  if [[ -f "$PROXY_POOL_FILE" ]]; then
+    while IFS= read -r line; do
+      [[ -n "$line" && ! "$line" =~ ^# ]] || continue
+      candidates+=("$line")
+    done < "$PROXY_POOL_FILE"
+  fi
+
+  # pool 为空时，退化到 map 里其它账号的代理（去重）
+  if (( ${#candidates[@]} == 0 )) && [[ -f "$PROXY_MAP_FILE" ]]; then
+    while IFS='=' read -r k v; do
+      [[ "$k" == "${PROVIDER}:"* && -n "$v" ]] || continue
+      candidates+=("$v")
+    done < "$PROXY_MAP_FILE"
+  fi
+
+  (( ${#candidates[@]} > 0 )) || return 1
+
+  mapfile -t _pool < <(printf '%s\n' "${candidates[@]}" | awk 'NF && $1 !~ /^#/' | awk '!seen[$0]++')
   local n="${#_pool[@]}"
   (( n > 0 )) || return 1
 
