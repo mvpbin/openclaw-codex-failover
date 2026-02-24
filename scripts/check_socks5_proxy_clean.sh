@@ -27,6 +27,10 @@ CUSTOM_CHECK_CMD="${OCX_SOCKS5_CLEAN_CHECK_CMD:-}"
 CACHE_TTL_SECONDS="${OCX_PROXY_CHECK_CACHE_TTL_SECONDS:-600}"
 CHECK_METRICS_FILE="${OCX_PROXY_CHECK_METRICS_FILE:-$BASE_DIR/reports/proxy-check-metrics.jsonl}"
 AUDIT_SCRIPT="${OCX_ACCOUNT_PROXY_AUDIT_SCRIPT:-$BASE_DIR/scripts/audit_account_proxy_binding.sh}"
+PROXY_QUARANTINE_FILE="${OCX_PROXY_QUARANTINE_FILE:-$BASE_DIR/run/proxy-quarantine.tsv}"
+PROXY_QUARANTINE_SECONDS="${OCX_PROXY_QUARANTINE_SECONDS:-1800}"
+PROXY_QUARANTINE_SECONDS_STRICT="${OCX_PROXY_QUARANTINE_SECONDS_STRICT:-3600}"
+PROXY_QUARANTINE_SECONDS_SOFT="${OCX_PROXY_QUARANTINE_SECONDS_SOFT:-900}"
 
 if [[ -z "$PROFILE_ID" ]]; then
   echo "usage: $0 <profileId> [proxy]" >&2
@@ -113,6 +117,87 @@ cache_file_for(){
   echo "$BASE_DIR/run/proxy-check-cache-${k}.json"
 }
 
+proxy_hash(){
+  local proxy="$1"
+  printf '%s' "$proxy" | sha256sum | awk '{print $1}'
+}
+
+quarantine_ttl_for(){
+  local reason="$1"
+  case "$reason" in
+    custom_check_rejected|denylist_hit|dirty_or_invalid_ip)
+      echo "$PROXY_QUARANTINE_SECONDS_STRICT"
+      ;;
+    egress_ip_missing|allowlist_miss)
+      echo "$PROXY_QUARANTINE_SECONDS_SOFT"
+      ;;
+    *)
+      echo "$PROXY_QUARANTINE_SECONDS"
+      ;;
+  esac
+}
+
+quarantine_remove_hash(){
+  local h="$1"
+  mkdir -p "$(dirname "$PROXY_QUARANTINE_FILE")"
+  local tmp
+  tmp="$(mktemp)"
+  if [[ -f "$PROXY_QUARANTINE_FILE" ]]; then
+    awk -F'\t' -v h="$h" '$1!=h' "$PROXY_QUARANTINE_FILE" > "$tmp"
+  fi
+  mv "$tmp" "$PROXY_QUARANTINE_FILE"
+}
+
+quarantine_set(){
+  local proxy="$1" reason="$2"
+  [[ "$PROXY_QUARANTINE_SECONDS" =~ ^[0-9]+$ ]] || return 0
+  [[ "$PROXY_QUARANTINE_SECONDS" -gt 0 ]] || return 0
+
+  local ttl
+  ttl="$(quarantine_ttl_for "$reason")"
+  [[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$PROXY_QUARANTINE_SECONDS"
+  (( ttl > 0 )) || return 0
+
+  local h now until tmp
+  h="$(proxy_hash "$proxy")"
+  now="$(date +%s)"
+  until=$((now + ttl))
+
+  mkdir -p "$(dirname "$PROXY_QUARANTINE_FILE")"
+  tmp="$(mktemp)"
+  if [[ -f "$PROXY_QUARANTINE_FILE" ]]; then
+    awk -F'\t' -v h="$h" '$1!=h' "$PROXY_QUARANTINE_FILE" > "$tmp"
+  fi
+  printf '%s\t%s\t%s\n' "$h" "$until" "$reason" >> "$tmp"
+  mv "$tmp" "$PROXY_QUARANTINE_FILE"
+}
+
+quarantine_check(){
+  local proxy="$1"
+  QUARANTINE_REMAINING=""
+  QUARANTINE_REASON=""
+  [[ -f "$PROXY_QUARANTINE_FILE" ]] || return 1
+
+  local h rec until reason now
+  h="$(proxy_hash "$proxy")"
+  rec="$(awk -F'\t' -v h="$h" '$1==h{print $2"\t"$3}' "$PROXY_QUARANTINE_FILE" | tail -n1)"
+  [[ -n "$rec" ]] || return 1
+
+  until="${rec%%$'\t'*}"
+  reason="${rec#*$'\t'}"
+  [[ "$until" =~ ^[0-9]+$ ]] || { quarantine_remove_hash "$h"; return 1; }
+
+  now="$(date +%s)"
+  if (( now < until )); then
+    QUARANTINE_REMAINING=$((until - now))
+    QUARANTINE_REASON="$reason"
+    return 0
+  fi
+
+  quarantine_remove_hash "$h"
+  return 1
+}
+
 try_cache(){
   local proxy="$1"
   local key file now
@@ -166,6 +251,13 @@ if [[ -z "$proxy" ]]; then
   exit 1
 fi
 
+if quarantine_check "$proxy"; then
+  echo "proxy check failed for $PROFILE_ID: quarantined (${QUARANTINE_REASON:-unknown}) ${QUARANTINE_REMAINING:-0}s remaining" >&2
+  metric fail "" "quarantine_active" "$proxy"
+  audit_binding "proxy_check" "$proxy_raw" "$proxy" "" "fail" "quarantine_active:${QUARANTINE_REASON:-unknown}"
+  exit 1
+fi
+
 if ! command -v curl >/dev/null 2>&1; then
   echo "missing command: curl" >&2
   metric fail "" "curl_missing" "$proxy"
@@ -196,6 +288,7 @@ done
 if [[ -z "$ip" ]]; then
   echo "proxy check failed for $PROFILE_ID: cannot get egress IP" >&2
   save_cache "$proxy" 0 "" "egress_ip_missing"
+  quarantine_set "$proxy" "egress_ip_missing"
   metric fail "" "egress_ip_missing" "$proxy"
   exit 1
 fi
@@ -229,6 +322,7 @@ fail("invalid IP format");
 ' "$ip"; then
   echo "proxy check failed for $PROFILE_ID: dirty or invalid IP $ip" >&2
   save_cache "$proxy" 0 "$ip" "dirty_or_invalid_ip"
+  quarantine_set "$proxy" "dirty_or_invalid_ip"
   metric fail "$ip" "dirty_or_invalid_ip" "$proxy"
   exit 1
 fi
@@ -236,6 +330,7 @@ fi
 if [[ -f "$IP_DENYLIST_FILE" ]] && grep -Fqx "$ip" "$IP_DENYLIST_FILE"; then
   echo "proxy check failed for $PROFILE_ID: IP in denylist $ip" >&2
   save_cache "$proxy" 0 "$ip" "denylist_hit"
+  quarantine_set "$proxy" "denylist_hit"
   metric fail "$ip" "denylist_hit" "$proxy"
   exit 1
 fi
@@ -244,6 +339,7 @@ if [[ -n "$IP_ALLOWLIST_FILE" && -f "$IP_ALLOWLIST_FILE" ]]; then
   if ! grep -Fqx "$ip" "$IP_ALLOWLIST_FILE"; then
     echo "proxy check failed for $PROFILE_ID: IP not in allowlist $ip" >&2
     save_cache "$proxy" 0 "$ip" "allowlist_miss"
+    quarantine_set "$proxy" "allowlist_miss"
     metric fail "$ip" "allowlist_miss" "$proxy"
     exit 1
   fi
@@ -253,6 +349,7 @@ if [[ -n "$CUSTOM_CHECK_CMD" ]]; then
   if ! OCX_PROXY_IP="$ip" OCX_PROFILE_ID="$PROFILE_ID" OCX_SOCKS5_PROXY="$proxy" bash -lc "$CUSTOM_CHECK_CMD"; then
     echo "proxy check failed for $PROFILE_ID: custom clean check rejected $ip" >&2
     save_cache "$proxy" 0 "$ip" "custom_check_rejected"
+    quarantine_set "$proxy" "custom_check_rejected"
     metric fail "$ip" "custom_check_rejected" "$proxy"
     audit_binding "proxy_check" "$proxy_raw" "$proxy" "$ip" "fail" "custom_check_rejected"
     exit 1
@@ -260,6 +357,7 @@ if [[ -n "$CUSTOM_CHECK_CMD" ]]; then
 fi
 
 save_cache "$proxy" 1 "$ip" "ok"
+quarantine_remove_hash "$(proxy_hash "$proxy")"
 metric pass "$ip" "ok" "$proxy"
 audit_binding "proxy_check" "$proxy_raw" "$proxy" "$ip" "pass" "ok"
 echo "proxy clean: $PROFILE_ID -> $ip"

@@ -23,6 +23,8 @@ USE_PROXY_LOGIN="${OCX_USE_PROXY_LOGIN:-1}"
 AUTO_FALLBACK="${OCX_PROXY_AUTO_FALLBACK:-1}"
 FALLBACK_CURSOR_FILE="${OCX_PROXY_POOL_CURSOR_FILE:-$BASE_DIR/run/proxy-pool-cursor.idx}"
 FALLBACK_PERSIST_MAP="${OCX_PROXY_FALLBACK_PERSIST_MAP:-1}"
+FALLBACK_MAX_ATTEMPTS="${OCX_PROXY_FALLBACK_MAX_ATTEMPTS:-6}"
+FALLBACK_BACKOFF_SECONDS="${OCX_PROXY_FALLBACK_BACKOFF_SECONDS:-2}"
 AUDIT_SCRIPT="${OCX_ACCOUNT_PROXY_AUDIT_SCRIPT:-$BASE_DIR/scripts/audit_account_proxy_binding.sh}"
 
 if [[ -z "$PROFILE_ID" ]]; then
@@ -160,33 +162,66 @@ else
   fi
 
   audit_binding "login_start" "$proxy_raw" "$proxy" "" "info" "proxy_login"
-  if ! "$BASE_DIR/scripts/check_socks5_proxy_clean.sh" "$PROFILE_ID" "$proxy"; then
+  primary_check_out=""
+  if ! primary_check_out="$("$BASE_DIR/scripts/check_socks5_proxy_clean.sh" "$PROFILE_ID" "$proxy" 2>&1)"; then
+    echo "$primary_check_out" >&2
     if [[ "$AUTO_FALLBACK" == "1" ]]; then
-      fb_raw="$(next_fallback_proxy || true)"
-      if [[ -n "$fb_raw" ]]; then
-        if fb_proxy="$(normalize_proxy "$fb_raw" 2>/dev/null || true)"; then
-          echo "primary proxy rejected, trying fallback pool proxy for $PROFILE_ID"
-          audit_binding "proxy_fallback" "$proxy_raw" "$fb_proxy" "" "info" "primary_rejected"
-          "$BASE_DIR/scripts/check_socks5_proxy_clean.sh" "$PROFILE_ID" "$fb_proxy"
+      [[ "$FALLBACK_MAX_ATTEMPTS" =~ ^[0-9]+$ ]] || FALLBACK_MAX_ATTEMPTS=6
+      [[ "$FALLBACK_BACKOFF_SECONDS" =~ ^[0-9]+$ ]] || FALLBACK_BACKOFF_SECONDS=2
+
+      success=0
+      attempt=1
+      while (( attempt <= FALLBACK_MAX_ATTEMPTS )); do
+        fb_raw="$(next_fallback_proxy || true)"
+        if [[ -z "$fb_raw" ]]; then
+          break
+        fi
+
+        fb_proxy="$(normalize_proxy "$fb_raw" 2>/dev/null || true)"
+        if [[ -z "$fb_proxy" ]]; then
+          echo "fallback proxy format invalid: $fb_raw" >&2
+          audit_binding "proxy_fallback" "$proxy_raw" "$fb_raw" "" "warn" "fallback_proxy_format_invalid"
+          attempt=$((attempt+1))
+          continue
+        fi
+
+        if [[ "$fb_proxy" == "$proxy" ]]; then
+          attempt=$((attempt+1))
+          continue
+        fi
+
+        echo "primary proxy rejected, fallback attempt ${attempt}/${FALLBACK_MAX_ATTEMPTS} for $PROFILE_ID"
+        fb_out=""
+        if fb_out="$("$BASE_DIR/scripts/check_socks5_proxy_clean.sh" "$PROFILE_ID" "$fb_proxy" 2>&1)"; then
+          echo "$fb_out"
           proxy="$fb_proxy"
+          success=1
+          audit_binding "proxy_fallback" "$proxy_raw" "$fb_proxy" "" "info" "fallback_selected"
           if [[ "$FALLBACK_PERSIST_MAP" == "1" ]]; then
             upsert_map "$PROFILE_ID" "$fb_raw"
             echo "fallback proxy persisted to map for $PROFILE_ID"
           fi
+          break
         else
-          echo "fallback proxy format invalid: $fb_raw" >&2
-          audit_binding "login_fail" "$fb_raw" "" "" "fail" "fallback_proxy_format_invalid"
-          exit 1
+          echo "$fb_out" >&2
+          audit_binding "proxy_fallback" "$proxy_raw" "$fb_proxy" "" "warn" "fallback_attempt_${attempt}_failed"
+          sleep "$((FALLBACK_BACKOFF_SECONDS * attempt))"
         fi
-      else
-        echo "proxy rejected and no fallback proxy available" >&2
-        audit_binding "login_fail" "$proxy_raw" "$proxy" "" "fail" "no_fallback_proxy"
+
+        attempt=$((attempt+1))
+      done
+
+      if [[ "$success" != "1" ]]; then
+        echo "proxy rejected and fallback attempts exhausted" >&2
+        audit_binding "login_fail" "$proxy_raw" "$proxy" "" "fail" "fallback_exhausted"
         exit 1
       fi
     else
       audit_binding "login_fail" "$proxy_raw" "$proxy" "" "fail" "proxy_check_failed"
       exit 1
     fi
+  else
+    echo "$primary_check_out"
   fi
 
   if [[ "$FORCE_LOGOUT" == "1" ]]; then
