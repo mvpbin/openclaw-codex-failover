@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+- Proxy quarantine TTL mechanism in `check_socks5_proxy_clean.sh` to suppress repeated reuse of known-bad proxies.
+- Multi-attempt fallback with backoff in `login_openai_codex_profile_via_proxy.sh`.
+- New env knobs for fallback/quarantine tuning in `openclaw-healthcheck.env.example`.
+
+### Changed
+- README homepage/date and config table updated with 2026-02-24 hardening notes.
+- Troubleshooting and release-note docs updated for quarantine/fallback operations.
+
 ## [2026-02-18] - Hardening + usability pass
 
 ### Added

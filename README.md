@@ -1,6 +1,6 @@
 # OpenClaw Codex 容灾机制（小白友好最终版）
 
-> Last updated: 2026-02-22
+> Last updated: 2026-02-24
 
 > 当前阶段：**Beta（可公开试用）**
 >
@@ -13,6 +13,14 @@
 ## 一句话流程
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
+
+## 最新增量（2026-02-24）
+
+- ✅ 代理失败隔离池（quarantine TTL）：坏代理会短期隔离，避免反复踩雷
+- ✅ 代理 fallback 升级：支持多次尝试 + 退避 backoff，不再“一次失败就结束”
+- ✅ 研究源可信度排序：Folo 源先归一化，再按权重优先扫描高可信主源
+
+> 这三项都属于“减少踩坑 + 提升自愈”的硬增强。
 
 ## 60 秒 Demo（已提供录屏）
 
@@ -236,7 +244,14 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_SUGGEST_DECOMMISSION` | `0` | 1=在修复建议中显示删除命令 |
 | `OCX_USE_PROXY_LOGIN` | `1` | 1=使用代理登录, 0=直连登录 |
 | `OCX_PROXY_AUTO_FALLBACK` | `1` | 1=主代理失败时尝试备用代理池 |
+| `OCX_PROXY_FALLBACK_MAX_ATTEMPTS` | `6` | fallback 最大尝试次数 |
+| `OCX_PROXY_FALLBACK_BACKOFF_SECONDS` | `2` | fallback 退避基数（第 N 次 sleep=N×基数） |
+| `OCX_PROXY_FALLBACK_PERSIST_MAP` | `1` | fallback 成功后是否回写账号映射 |
 | `OCX_PROXY_DEFAULT_SCHEME` | `socks5h`/`http` | host:port:user:pass 这种格式自动补全的协议 |
+| `OCX_PROXY_QUARANTINE_FILE` | `/data/openclaw/run/proxy-quarantine.tsv` | 代理隔离池文件 |
+| `OCX_PROXY_QUARANTINE_SECONDS` | `1800` | 默认隔离时长（秒） |
+| `OCX_PROXY_QUARANTINE_SECONDS_STRICT` | `3600` | 严格失败类型隔离时长（如 custom_check_rejected） |
+| `OCX_PROXY_QUARANTINE_SECONDS_SOFT` | `900` | 软失败类型隔离时长（如 egress_ip_missing） |
 | `OCX_PROXY_CHECK_CACHE_TTL_SECONDS` | `600` | 代理 clean 检测缓存 TTL（秒） |
 | `OCX_PROXY_CHECK_CONCURRENCY` | `5` | 批量代理检测并发度 |
 | `OCX_PROXY_CHECK_METRICS_FILE` | `/data/openclaw/reports/proxy-check-metrics.jsonl` | 代理检测结果落盘文件 |

@@ -45,3 +45,9 @@
 - 智能熔断 v2 已落地：失败类型分级（`auth/network/other`）、半开探测、default 独立策略、冷却抖动、失败计数衰减。
 - 告警降噪增强（仅 cooldown 抑制 + 去重/提醒窗口加宽）。
 - MEV 提交与报表持续加固：builder 遥测、聚合一致性校验、拒绝原因聚合、事件索引完整性检查。
+
+## 2026-02-24 增量更新
+- 新增代理隔离池 TTL：对已知坏代理做短期隔离，避免反复踩雷。
+- 新增 fallback 多次尝试 + 退避（`OCX_PROXY_FALLBACK_MAX_ATTEMPTS`、`OCX_PROXY_FALLBACK_BACKOFF_SECONDS`）。
+- 新增 fallback 成功后回写映射开关（`OCX_PROXY_FALLBACK_PERSIST_MAP`）。
+- 补充 env 示例与排障文档（隔离池/fallback 调参指引）。
