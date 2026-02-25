@@ -8,9 +8,9 @@ All notable changes to this project are documented here.
 - Proxy quarantine TTL mechanism in `check_socks5_proxy_clean.sh` to suppress repeated reuse of known-bad proxies.
 - Multi-attempt fallback with backoff in `login_openai_codex_profile_via_proxy.sh`.
 - New env knobs for fallback/quarantine tuning in `openclaw-healthcheck.env.example`.
-- `SECURITY.md` with public-repo safety policy and leak response steps.
-- `scripts/bootstrap.sh` for one-command public-safe bootstrap.
-- `config/public-safe.env.example` for placeholder-only runtime bootstrap config.
+- `SECURITY.md` + `SECURITY.zh-CN.md` with public-repo safety policy and leak response steps.
+- `scripts/bootstrap.sh` for one-command public-safe bootstrap (supports `OCX_BOOTSTRAP_LANG=zh-CN`).
+- `config/public-safe.env.example` + `.zh-CN` placeholder-only runtime bootstrap configs.
 
 ### Changed
 - README homepage/date and config table updated with 2026-02-24 hardening notes.

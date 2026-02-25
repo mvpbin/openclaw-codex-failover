@@ -4,10 +4,12 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE_DIR="${OCX_BASE_DIR:-/data/openclaw}"
 ENV_FILE="${OCX_ENV_FILE:-/etc/openclaw-healthcheck.env}"
+BOOTSTRAP_LANG="${OCX_BOOTSTRAP_LANG:-en}"
 
 echo "[bootstrap] root=$ROOT_DIR"
 echo "[bootstrap] base=$BASE_DIR"
 echo "[bootstrap] env=$ENV_FILE"
+echo "[bootstrap] lang=$BOOTSTRAP_LANG"
 
 mkdir -p "$BASE_DIR/scripts" "$BASE_DIR/reports" "$BASE_DIR/run" "$BASE_DIR/config" "$BASE_DIR/systemd"
 
@@ -19,9 +21,13 @@ cp -n "$ROOT_DIR/config/openai-codex-auth-map.env.example" "$BASE_DIR/config/ope
 
 if [[ ! -f "$ENV_FILE" ]]; then
   mkdir -p "$(dirname "$ENV_FILE")"
-  cp "$ROOT_DIR/config/public-safe.env.example" "$ENV_FILE"
+  TEMPLATE="$ROOT_DIR/config/public-safe.env.example"
+  if [[ "$BOOTSTRAP_LANG" == "zh" || "$BOOTSTRAP_LANG" == "zh-CN" || "$BOOTSTRAP_LANG" == "zh_cn" ]]; then
+    TEMPLATE="$ROOT_DIR/config/public-safe.env.example.zh-CN"
+  fi
+  cp "$TEMPLATE" "$ENV_FILE"
   sed -i "s#^OCX_BASE_DIR=.*#OCX_BASE_DIR=$BASE_DIR#" "$ENV_FILE"
-  echo "[bootstrap] created $ENV_FILE from public-safe template"
+  echo "[bootstrap] created $ENV_FILE from template: $(basename "$TEMPLATE")"
 else
   echo "[bootstrap] keep existing env: $ENV_FILE"
 fi
