@@ -118,6 +118,20 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/preflight_openai_codex_failover.sh
 
 ---
 
+## 公开仓库的 3 个安全增强（已内置）
+
+1) `SECURITY.md`：安全边界与泄露应急流程
+2) `scripts/bootstrap.sh`：一键初始化（目录/脚本/systemd/模板）
+3) `config/public-safe.env.example`：公开安全模板（无真实密钥）
+
+快速启动（推荐）：
+```bash
+cd openclaw-codex-failover
+bash scripts/bootstrap.sh
+```
+
+---
+
 ## 一键安装 + 一键验收（复制即用）
 
 ```bash
