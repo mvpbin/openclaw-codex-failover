@@ -45,7 +45,6 @@
 ## 2026-02-22 incremental update
 - Smart circuit-breaker v2 landed: failure-type classes (`auth/network/other`), half-open probe, default-profile override, cooldown jitter, and fail-count decay.
 - Alert noise tuning improved (cooldown-only suppression + wider dedup/remind windows).
-- MEV submission/reporting hardening continued with builder telemetry, consistency checks, rejection-reason aggregates, and event-index integrity checks.
 
 ## 2026-02-24 incremental update
 - Added proxy quarantine TTL to avoid repeatedly reusing known-bad proxies.
