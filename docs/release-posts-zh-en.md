@@ -1,15 +1,17 @@
 # 发布文案（中英双语，复制即发）
 
-## 0) 主页更新通知（2026-02-24 增量）
+## 0) 主页更新通知（2026-02-28 增量）
 
 ### 中文
-主页与文档已更新（2026-02-24）：
-- 新增代理隔离池（坏代理短期隔离，避免反复踩雷）
+主页与文档已更新（2026-02-28）：
+- 新增健康快照停更自愈脚本（watchdog）
+- 代理隔离池（坏代理短期隔离，避免反复踩雷）
 - fallback 升级为多次尝试 + 退避
 - 补充 env 与排障文档，支持快速调参
 
 ### English
-Homepage/docs updated (2026-02-24):
+Homepage/docs updated (2026-02-28):
+- Added a stale-health-snapshot watchdog for auto-heal
 - Added proxy quarantine TTL to avoid repeatedly hitting bad proxies
 - Upgraded fallback to multi-attempt with backoff
 - Expanded env/troubleshooting docs for faster tuning and recovery

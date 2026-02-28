@@ -1,6 +1,6 @@
 # OpenClaw Codex 容灾机制（小白友好最终版）
 
-> Last updated: 2026-02-24
+> Last updated: 2026-02-28
 
 > 当前阶段：**Beta（可公开试用）**
 >

@@ -14,7 +14,8 @@ All notable changes to this project are documented here.
 - `scripts/watch_openai_codex_health_freshness.sh` to auto-heal stale `openai_codex_health_latest.json` reports.
 
 ### Changed
-- README homepage/date and config table updated with 2026-02-24 hardening notes.
+- README homepage/date and config table updated with 2026-02-28 freshness-watchdog notes and maintenance guidance.
+- Added an explicit stale-report recovery runbook (`watch_openai_codex_health_freshness.sh`) in docs and operator guidance.
 - Troubleshooting and release-note docs updated for quarantine/fallback operations.
 
 ## [2026-02-18] - Hardening + usability pass
