@@ -11,6 +11,7 @@ All notable changes to this project are documented here.
 - `SECURITY.md` + `SECURITY.zh-CN.md` with public-repo safety policy and leak response steps.
 - `scripts/bootstrap.sh` for one-command public-safe bootstrap (supports `OCX_BOOTSTRAP_LANG=zh-CN`).
 - `config/public-safe.env.example` + `.zh-CN` placeholder-only runtime bootstrap configs.
+- `scripts/watch_openai_codex_health_freshness.sh` to auto-heal stale `openai_codex_health_latest.json` reports.
 
 ### Changed
 - README homepage/date and config table updated with 2026-02-24 hardening notes.

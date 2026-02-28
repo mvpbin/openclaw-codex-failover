@@ -14,13 +14,14 @@
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
 
-## 最新增量（2026-02-24）
+## 最新增量（2026-02-28）
 
+- ✅ 健康报告“停更”自愈看门狗：`scripts/watch_openai_codex_health_freshness.sh`
 - ✅ 代理失败隔离池（quarantine TTL）：坏代理会短期隔离，避免反复踩雷
 - ✅ 代理 fallback 升级：支持多次尝试 + 退避 backoff，不再“一次失败就结束”
 - ✅ 研究源可信度排序：Folo 源先归一化，再按权重优先扫描高可信主源
 
-> 这三项都属于“减少踩坑 + 提升自愈”的硬增强。
+> 这四项都属于“减少踩坑 + 提升自愈”的硬增强。
 
 ## 60 秒 Demo（已提供录屏）
 
@@ -114,6 +115,13 @@ codex --version
 
 ```bash
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/preflight_openai_codex_failover.sh
+```
+
+健康报告新鲜度看门狗（解决“面板显示旧报告/停更”）：
+```bash
+${OCX_BASE_DIR:-/data/openclaw}/scripts/watch_openai_codex_health_freshness.sh
+# 可选：最大允许陈旧秒数（默认 1800）
+# OCX_MAX_STALE_SECONDS=900 ${OCX_BASE_DIR:-/data/openclaw}/scripts/watch_openai_codex_health_freshness.sh
 ```
 
 ---
