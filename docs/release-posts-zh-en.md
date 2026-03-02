@@ -1,20 +1,22 @@
 # 发布文案（中英双语，复制即发）
 
-## 0) 主页更新通知（2026-02-28 增量）
+## 0) 主页更新通知（2026-03-02 增量）
 
 ### 中文
-主页与文档已更新（2026-02-28）：
-- 新增健康快照停更自愈脚本（watchdog）
-- 代理隔离池（坏代理短期隔离，避免反复踩雷）
-- fallback 升级为多次尝试 + 退避
-- 补充 env 与排障文档，支持快速调参
+主页与文档已更新（2026-03-02）：
+- 新增账号多样化重排（按 `accountId` 交错，避免同账号连续命中）
+- 增加 `accountId` 回填兜底（`OCX_AUTH_PROFILES_PATH`）
+- 探针失败新增 quota/auth 压力提示，减少“纯网络故障”误判
+- 启用 `AUTO_REORDER` 时避免后续 sync 覆盖新顺序
+- README 首页日期与更新记录同步至 2026-03-02
 
 ### English
-Homepage/docs updated (2026-02-28):
-- Added a stale-health-snapshot watchdog for auto-heal
-- Added proxy quarantine TTL to avoid repeatedly hitting bad proxies
-- Upgraded fallback to multi-attempt with backoff
-- Expanded env/troubleshooting docs for faster tuning and recovery
+Homepage/docs updated (2026-03-02):
+- Added account-diversity reorder (interleave by `accountId` to avoid same-account streaks)
+- Added `accountId` fallback enrichment via `OCX_AUTH_PROFILES_PATH`
+- Probe failures now surface quota/auth pressure hints (clearer than generic network-only failures)
+- Prevented post-reorder sync from overriding newly computed order when auto-reorder is enabled
+- README homepage/update-date markers synced to 2026-03-02
 
 
 > 发布前请先按 README 的“隐私发布检查清单”做脱敏。
