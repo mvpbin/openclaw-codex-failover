@@ -32,6 +32,7 @@ ALERT_SUPPRESS_COOLDOWN_ONLY="${OCX_ALERT_SUPPRESS_COOLDOWN_ONLY:-1}"
 AUTO_REPAIR="${OCX_AUTO_REPAIR:-0}"
 REPAIR_MIN_INTERVAL="${OCX_REPAIR_MIN_INTERVAL_SECONDS:-1800}"
 AUTO_REORDER="${OCX_AUTO_REORDER:-0}"
+AUTO_REORDER_ACCOUNT_DIVERSITY="${OCX_AUTO_REORDER_ACCOUNT_DIVERSITY:-1}"
 CB_FAIL_THRESHOLD="${OCX_CB_FAIL_THRESHOLD:-3}"
 CB_COOLDOWN_SECONDS="${OCX_CB_COOLDOWN_SECONDS:-3600}"
 # Smarter circuit-breaker tuning by failure type
@@ -53,6 +54,7 @@ CB_FAILCOUNT_DECAY_ENABLED="${OCX_CB_FAILCOUNT_DECAY_ENABLED:-1}"
 CB_FAILCOUNT_DECAY_INTERVAL_SECONDS="${OCX_CB_FAILCOUNT_DECAY_INTERVAL_SECONDS:-1800}"
 DRY_RUN="${OCX_DRY_RUN:-0}"
 CODEX_AUTH_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
+AUTH_PROFILES_PATH="${OCX_AUTH_PROFILES_PATH:-/root/.openclaw/agents/main/agent/auth-profiles.json}"
 
 mkdir -p "$REPORT_DIR" "$RUN_DIR" "$CONFIG_HISTORY_DIR"
 DATE_UTC="$(date -u +%Y%m%d)"
@@ -62,7 +64,7 @@ LOG_FILE="$REPORT_DIR/openai_codex_health_${DATE_UTC}.log"
 LATEST_JSON="$REPORT_DIR/openai_codex_health_latest.json"
 
 WARNINGS=(); CRITICALS=(); RELOGIN_CMDS=(); FAILED_PROFILES=(); EXPIRING_PROFILES=(); ALL_PROFILES=(); UNUSABLE_PROFILES=(); COOLDOWN_PROFILES=();
-declare -A PROFILE_EMAIL_MAP PROFILE_REMAINING PROFILE_SCORE PROFILE_FAILCOUNT PROFILE_COOLDOWN_UNTIL
+declare -A PROFILE_EMAIL_MAP PROFILE_REMAINING PROFILE_SCORE PROFILE_FAILCOUNT PROFILE_COOLDOWN_UNTIL PROFILE_ACCOUNT_MAP
 
 SIMULATE_UNUSABLE="${SIMULATE_UNUSABLE:-}"
 [[ "${1:-}" == "--simulate-unusable" ]] && SIMULATE_UNUSABLE="${2:-}"
@@ -162,8 +164,9 @@ while IFS= read -r p; do [[ -n "$p" ]] && UNUSABLE_PROFILES+=("$p"); done < <(PA
 EXPIRING_MS=$((EXPIRING_HOURS*3600000))
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
-  pid="${line%%$'\t'*}"; rem="${line##*$'\t'}"
+  IFS=$'\t' read -r pid rem account_id <<< "$line"
   ALL_PROFILES+=("$pid"); PROFILE_REMAINING["$pid"]="$rem"
+  [[ -n "${account_id:-}" ]] && PROFILE_ACCOUNT_MAP["$pid"]="$account_id"
   cooldown_until="${PROFILE_COOLDOWN_UNTIL[$pid]:-0}"
   if (( cooldown_until > NOW_TS )); then
     remain_cd=$((cooldown_until - NOW_TS))
@@ -183,9 +186,31 @@ while IFS= read -r line; do
   fi
 done < <(PARSED="$parsed_json" node - <<'NODE'
 const d=JSON.parse(process.env.PARSED||'{}');
-for(const p of (d.oauthProfiles||[])) console.log(`${p.profileId}\t${Number(p.remainingMs||0)}`);
+for(const p of (d.oauthProfiles||[])){
+  const aid=(p && p.accountId!=null) ? String(p.accountId).replace(/\t/g,' ').trim() : '';
+  console.log(`${p.profileId}\t${Number(p.remainingMs||0)}\t${aid}`);
+}
 NODE
 )
+
+# fallback: models status may not expose accountId; read from auth-profiles store when available
+if [[ -f "$AUTH_PROFILES_PATH" && ${#ALL_PROFILES[@]} -gt 0 ]]; then
+  while IFS=$'\t' read -r pid aid; do
+    [[ -n "$pid" && -n "$aid" ]] || continue
+    [[ -z "${PROFILE_ACCOUNT_MAP[$pid]:-}" ]] && PROFILE_ACCOUNT_MAP["$pid"]="$aid"
+  done < <(AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" node - <<'NODE'
+const fs=require('fs');
+const profiles=String(process.env.PROFILES_JOINED||'').split('\n').map(x=>x.trim()).filter(Boolean);
+let store={};
+try{store=JSON.parse(fs.readFileSync(process.env.AUTH_PROFILES_PATH,'utf8'));}catch{}
+const map=(store&&store.profiles&&typeof store.profiles==='object')?store.profiles:{};
+for(const pid of profiles){
+  const aid=map?.[pid]?.accountId;
+  if(aid!=null && String(aid).trim()) console.log(`${pid}\t${String(aid).replace(/\t/g,' ').trim()}`);
+}
+NODE
+)
+fi
 
 for u in "${UNUSABLE_PROFILES[@]:-}"; do [[ -n "$u" ]] && FAILED_PROFILES+=("$u"); done
 if ((${#FAILED_PROFILES[@]} > 0)); then mapfile -t FAILED_PROFILES < <(printf '%s\n' "${FAILED_PROFILES[@]}" | awk 'NF' | sort -u); fi
@@ -276,6 +301,15 @@ if (( probe1_ok==0 && probe2_ok==0 )); then
 elif (( probe1_ok==0 || probe2_ok==0 )); then
   WARNINGS+=("one probe failed")
 fi
+if (( probe1_ok==0 || probe2_ok==0 )); then
+  probe_combined_lc="$(printf '%s\n%s\n' "$probe1_out" "$probe2_out" | tr '[:upper:]' '[:lower:]')"
+  if echo "$probe_combined_lc" | grep -Eqi 'usage[[:space:]]+limit|api[[:space:]]+rate[[:space:]]+limit[[:space:]]+reached'; then
+    WARNINGS+=("probe hint: quota/rate-limit pressure (not pure network outage)")
+  fi
+  if echo "$probe_combined_lc" | grep -Eqi 'authentication[[:space:]]+token[[:space:]]+invalidated|token[[:space:]]+invalidated'; then
+    WARNINGS+=("probe hint: auth token invalidated (not pure network outage)")
+  fi
+fi
 err_summary=""
 if (( probe1_ok==0 || probe2_ok==0 )); then
   err_summary="$(echo "$probe1_out | $probe2_out" | tr '\n' ' ' | sed -E 's/[A-Za-z0-9_\-]{24,}/[REDACTED]/g' | cut -c1-300)"
@@ -303,7 +337,50 @@ if [[ "$AUTO_REPAIR" == "1" && "$state" == "Degraded" && "$DRY_RUN" != "1" ]]; t
 
 # auto reorder by health score
 if [[ "$AUTO_REORDER" == "1" && ${#ALL_PROFILES[@]} -gt 0 ]]; then
-  mapfile -t sorted_profiles < <(for p in "${ALL_PROFILES[@]}"; do echo -e "${PROFILE_SCORE[$p]:-0}\t$p"; done | sort -rn | awk '{print $2}')
+  mapfile -t sorted_profiles < <(
+    AUTO_REORDER_ACCOUNT_DIVERSITY="$AUTO_REORDER_ACCOUNT_DIVERSITY" \
+    ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" \
+    SCORE_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do echo "$p=${PROFILE_SCORE[$p]:-0}"; done)" \
+    ACCOUNT_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do [[ -n "${PROFILE_ACCOUNT_MAP[$p]:-}" ]] && echo "$p=${PROFILE_ACCOUNT_MAP[$p]}"; done)" \
+    node - <<'NODE'
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const mapFrom=(s)=>{const o={}; for(const l of split(s)){const i=l.indexOf('='); if(i>0) o[l.slice(0,i).trim()]=l.slice(i+1).trim();} return o;};
+const profiles=split(process.env.ALL_PROFILES_JOINED);
+const scoreMap=mapFrom(process.env.SCORE_JOINED);
+const accountMap=mapFrom(process.env.ACCOUNT_JOINED);
+const useDiversity=String(process.env.AUTO_REORDER_ACCOUNT_DIVERSITY||'1')!=='0';
+const items=profiles.map((id)=>({
+  id,
+  score:Number(scoreMap[id]||0),
+  accountId:String(accountMap[id]||'').trim()
+})).sort((a,b)=> (b.score-a.score) || a.id.localeCompare(b.id));
+
+if(!useDiversity){
+  for(const it of items) console.log(it.id);
+  process.exit(0);
+}
+
+const groups=new Map();
+for(const it of items){
+  const key=it.accountId ? `acc:${it.accountId}` : `single:${it.id}`;
+  if(!groups.has(key)) groups.set(key, []);
+  groups.get(key).push(it);
+}
+const lanes=[...groups.entries()]
+  .map(([key,queue])=>({key,queue}))
+  .sort((a,b)=> (b.queue[0].score-a.queue[0].score) || a.key.localeCompare(b.key));
+
+for(;;){
+  let emitted=0;
+  for(const lane of lanes){
+    if(lane.queue.length===0) continue;
+    console.log(lane.queue.shift().id);
+    emitted+=1;
+  }
+  if(emitted===0) break;
+}
+NODE
+  )
   if ((${#sorted_profiles[@]} > 0)); then
     openclaw models auth order set --agent main --provider "$PROVIDER" "${sorted_profiles[@]}" >/dev/null 2>&1 || WARNINGS+=("auto reorder failed")
   fi
@@ -311,7 +388,9 @@ fi
 
 # sync auth order always best effort
 sync_note=""
-if [[ -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
+if [[ "$AUTO_REORDER" == "1" ]]; then
+  sync_note="sync skipped (auto reorder enabled)"
+elif [[ -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
   if "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" "$PROVIDER" main >/dev/null 2>&1; then sync_note="sync_openclaw_auth_order: ok"; else sync_note="sync_openclaw_auth_order: failed"; WARNINGS+=("sync_openclaw_auth_order failed"); fi
 else sync_note="sync script missing"; WARNINGS+=("sync script missing"); fi
 

@@ -17,6 +17,7 @@ All notable changes to this project are documented here.
 - README homepage/date and config table updated with 2026-02-28 freshness-watchdog notes and maintenance guidance.
 - Added an explicit stale-report recovery runbook (`watch_openai_codex_health_freshness.sh`) in docs and operator guidance.
 - Troubleshooting and release-note docs updated for quarantine/fallback operations.
+- Hardened `healthcheck_openai_codex_pool.sh` auto-reorder with default account-diversity interleaving (`OCX_AUTO_REORDER_ACCOUNT_DIVERSITY=1`), added `OCX_AUTH_PROFILES_PATH` fallback for accountId enrichment, skipped post-reorder sync override when auto-reorder is enabled, and added probe auth/quota pressure hints for clearer outage attribution.
 
 ## [2026-02-18] - Hardening + usability pass
 

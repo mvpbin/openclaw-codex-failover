@@ -19,8 +19,10 @@
 - ✅ 健康报告“停更”自愈看门狗：`scripts/watch_openai_codex_health_freshness.sh`
 - ✅ 代理失败隔离池（quarantine TTL）：坏代理会短期隔离，避免反复踩雷
 - ✅ 代理 fallback 升级：支持多次尝试 + 退避 backoff，不再“一次失败就结束”
+- ✅ 自动重排增强：默认按 `accountId` 交错重排（保留健康分优先），降低同账号连续命中
+- ✅ 探针异常提示增强：当输出命中 quota/auth 关键字时，报告会提示“非纯网络故障”
 
-> 这三项都属于“减少踩坑 + 提升自愈”的硬增强。
+> 这些都属于“减少踩坑 + 提升自愈”的硬增强。
 
 ## 60 秒 Demo（已提供录屏）
 
@@ -257,8 +259,10 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_CB_FAIL_THRESHOLD` | `3` | 熔断触发失败次数 |
 | `OCX_CB_COOLDOWN_SECONDS` | `3600` | 熔断冷却时长 |
 | `OCX_AUTO_REORDER` | `0` | 1=按健康分自动重排账号顺序 |
+| `OCX_AUTO_REORDER_ACCOUNT_DIVERSITY` | `1` | 1=按 `accountId` 交错重排，减少同账号连续命中 |
 | `OCX_AGENT_TIMEOUT_SECONDS` | `45` | 轻量调用超时 |
 | `OCX_CODEX_AUTH_PATH` | `/root/.codex/auth.json` | Codex 登录凭证路径（按运行用户调整） |
+| `OCX_AUTH_PROFILES_PATH` | `/root/.openclaw/agents/main/agent/auth-profiles.json` | accountId 回填来源（models status 不含 accountId 时使用） |
 | `OCX_LOG_RETENTION_DAYS` | `30` | 日志保留天数 |
 | `OCX_DRY_RUN` | `0` | 1=只检查不发消息 |
 | `OCX_AUTO_REPAIR` | `0` | 1=异常时自动触发修复 |
