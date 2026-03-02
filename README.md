@@ -1,6 +1,6 @@
 # OpenClaw Codex 容灾机制（小白友好最终版）
 
-> Last updated: 2026-02-28
+> Last updated: 2026-03-02
 
 > 当前阶段：**Beta（可公开试用）**
 >
@@ -14,7 +14,7 @@
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
 
-## 最新增量（2026-02-28）
+## 最新增量（2026-03-02）
 
 - ✅ 健康报告“停更”自愈看门狗：`scripts/watch_openai_codex_health_freshness.sh`
 - ✅ 代理失败隔离池（quarantine TTL）：坏代理会短期隔离，避免反复踩雷
