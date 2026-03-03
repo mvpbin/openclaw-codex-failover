@@ -1,6 +1,6 @@
 # OpenClaw Codex 容灾机制（小白友好最终版）
 
-> Last updated: 2026-03-02
+> Last updated: 2026-03-03
 
 > 当前阶段：**Beta（可公开试用）**
 >
@@ -14,15 +14,14 @@
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
 
-## 最新增量（2026-03-02）
+## 最新增量（2026-03-03）
 
-- ✅ 健康报告“停更”自愈看门狗：`scripts/watch_openai_codex_health_freshness.sh`
-- ✅ 代理失败隔离池（quarantine TTL）：坏代理会短期隔离，避免反复踩雷
-- ✅ 代理 fallback 升级：支持多次尝试 + 退避 backoff，不再“一次失败就结束”
-- ✅ 自动重排增强：默认按 `accountId` 交错重排（保留健康分优先），降低同账号连续命中
-- ✅ 探针异常提示增强：当输出命中 quota/auth 关键字时，报告会提示“非纯网络故障”
+- ✅ 修复容灾盲区：探针命中 `usage limit` / `token invalidated` / `connected | error` 时，立即推断并熔断疑似故障账号
+- ✅ 新增探针驱动冷却：支持从 `Try again in ~NNN min` 解析冷却时长（带 min/max 边界）
+- ✅ 即使 `OCX_AUTO_REORDER=0`，也可按探针信号把疑似故障账号降到顺序末尾，避免 Telegram 长时间无回复
+- ✅ 修复状态机误判：存在 failed/expiring profiles 时不会再显示 Healthy
 
-> 这些都属于“减少踩坑 + 提升自愈”的硬增强。
+> 这次是“避免卡死 + 保证可观测性 + 强化切换动作”的修复包。
 
 ## 60 秒 Demo（已提供录屏）
 
@@ -384,8 +383,9 @@ OCX_CB_FAILCOUNT_DECAY_INTERVAL_SECONDS=1800
 - 快速开始：`docs/quickstart-zh.md`
 - 故障排查：`docs/troubleshooting-zh.md`
 - 变更记录：`CHANGELOG.md`
-- Release Notes (EN): `docs/release-notes-2026-02-19.md`
-- 发布说明（中文）: `docs/release-notes-2026-02-19.zh-CN.md`
+- Release Notes (EN, latest): `docs/release-notes-2026-03-03.md`
+- 发布说明（中文，最新）: `docs/release-notes-2026-03-03.zh-CN.md`
+- 历史发布说明：`docs/release-notes-2026-03-02.md` / `docs/release-notes-2026-03-02.zh-CN.md`
 
 ## License
 
