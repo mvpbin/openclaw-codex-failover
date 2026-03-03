@@ -55,6 +55,10 @@ CB_FAILCOUNT_DECAY_INTERVAL_SECONDS="${OCX_CB_FAILCOUNT_DECAY_INTERVAL_SECONDS:-
 DRY_RUN="${OCX_DRY_RUN:-0}"
 CODEX_AUTH_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
 AUTH_PROFILES_PATH="${OCX_AUTH_PROFILES_PATH:-/root/.openclaw/agents/main/agent/auth-profiles.json}"
+PROBE_HINT_FORCE_TRIP="${OCX_PROBE_HINT_FORCE_TRIP:-1}"
+PROBE_HINT_MIN_COOLDOWN_SECONDS="${OCX_PROBE_HINT_MIN_COOLDOWN_SECONDS:-1800}"
+PROBE_HINT_MAX_COOLDOWN_SECONDS="${OCX_PROBE_HINT_MAX_COOLDOWN_SECONDS:-259200}"
+PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER="${OCX_PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER:-1}"
 
 mkdir -p "$REPORT_DIR" "$RUN_DIR" "$CONFIG_HISTORY_DIR"
 DATE_UTC="$(date -u +%Y%m%d)"
@@ -64,7 +68,7 @@ LOG_FILE="$REPORT_DIR/openai_codex_health_${DATE_UTC}.log"
 LATEST_JSON="$REPORT_DIR/openai_codex_health_latest.json"
 
 WARNINGS=(); CRITICALS=(); RELOGIN_CMDS=(); FAILED_PROFILES=(); EXPIRING_PROFILES=(); ALL_PROFILES=(); UNUSABLE_PROFILES=(); COOLDOWN_PROFILES=();
-declare -A PROFILE_EMAIL_MAP PROFILE_REMAINING PROFILE_SCORE PROFILE_FAILCOUNT PROFILE_COOLDOWN_UNTIL PROFILE_ACCOUNT_MAP
+declare -A PROFILE_EMAIL_MAP PROFILE_REMAINING PROFILE_SCORE PROFILE_FAILCOUNT PROFILE_COOLDOWN_UNTIL PROFILE_ACCOUNT_MAP PROFILE_HINT_COOLDOWN PROFILE_FORCE_TRIP
 
 SIMULATE_UNUSABLE="${SIMULATE_UNUSABLE:-}"
 [[ "${1:-}" == "--simulate-unusable" ]] && SIMULATE_UNUSABLE="${2:-}"
@@ -214,12 +218,97 @@ fi
 
 for u in "${UNUSABLE_PROFILES[@]:-}"; do [[ -n "$u" ]] && FAILED_PROFILES+=("$u"); done
 if ((${#FAILED_PROFILES[@]} > 0)); then mapfile -t FAILED_PROFILES < <(printf '%s\n' "${FAILED_PROFILES[@]}" | awk 'NF' | sort -u); fi
+if ((${#FAILED_PROFILES[@]} > 0)); then WARNINGS+=("failed profiles detected: ${#FAILED_PROFILES[@]}"); fi
+if ((${#EXPIRING_PROFILES[@]} > 0)); then WARNINGS+=("expiring profiles detected: ${#EXPIRING_PROFILES[@]}"); fi
 
 # coarse error hints from current status/probe payload (used to improve breaker typing)
 STATUS_HAS_AUTH=0
 STATUS_HAS_NETWORK=0
 if echo "$status_json" | grep -Eqi 'expired|invalid|oauth|unauth|forbidden|banned|account'; then STATUS_HAS_AUTH=1; fi
 if echo "$status_json" | grep -Eqi 'timeout|connect|dns|network|tls|econn|enotfound|proxy'; then STATUS_HAS_NETWORK=1; fi
+
+
+# multi-probe (run before scoring so probe hints can participate in breaker decisions)
+probe1_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-a" --message "Reply exactly: ok" --thinking off --json 2>&1 || true)"
+probe2_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-b" --message "Reply exactly: pong" --thinking off --json 2>&1 || true)"
+probe1_ok=0; probe2_ok=0
+probe_hint_quota=0; probe_hint_auth=0; probe_hint_provider=0
+probe_retry_after_minutes=0
+probe_combined_lc=""
+inferred_fail_profile=""
+echo "$probe1_out" | grep -Eq '"text"\s*:\s*"ok"' && probe1_ok=1
+echo "$probe2_out" | grep -Eq '"text"\s*:\s*"pong"' && probe2_ok=1
+if (( probe1_ok==0 && probe2_ok==0 )); then
+  CRITICALS+=("both probes failed")
+elif (( probe1_ok==0 || probe2_ok==0 )); then
+  WARNINGS+=("one probe failed")
+fi
+if (( probe1_ok==0 || probe2_ok==0 )); then
+  probe_combined_lc="$(printf '%s\n%s\n' "$probe1_out" "$probe2_out" | tr '[:upper:]' '[:lower:]')"
+  if echo "$probe_combined_lc" | grep -Eqi 'you have hit your chatgpt usage limit|usage[[:space:]]+limit|api[[:space:]]+rate[[:space:]]+limit([[:space:]]+reached)?|rate[[:space:]-]*limit'; then
+    probe_hint_quota=1
+    WARNINGS+=("probe hint: quota/rate-limit pressure (not pure network outage)")
+  fi
+  if echo "$probe_combined_lc" | grep -Eqi 'authentication[[:space:]]+token([[:space:]]+has)?[[:space:]]+been[[:space:]]+invalidated|authentication[[:space:]]+token[[:space:]]+invalidated|token([[:space:]]+has)?[[:space:]]+been[[:space:]]+invalidated|please[[:space:]]+try[[:space:]]+signing[[:space:]]+in[[:space:]]+again'; then
+    probe_hint_auth=1
+    WARNINGS+=("probe hint: auth token invalidated / re-login required (not pure network outage)")
+  fi
+  if echo "$probe_combined_lc" | grep -Eqi 'connected[[:space:]]*\|[[:space:]]*error|run[[:space:]]+error'; then
+    probe_hint_provider=1
+    WARNINGS+=("probe hint: provider runtime returned connected|error")
+  fi
+  retry_after_raw="$(echo "$probe_combined_lc" | grep -Eo 'try[[:space:]]+again[[:space:]]+in[[:space:]]*~?[0-9]+[[:space:]]*min' | head -n1 || true)"
+  if [[ -n "$retry_after_raw" ]]; then
+    probe_retry_after_minutes="$(echo "$retry_after_raw" | sed -E 's/.*~?([0-9]+).*/\1/' || true)"
+    if [[ "$probe_retry_after_minutes" =~ ^[0-9]+$ && $probe_retry_after_minutes -gt 0 ]]; then
+      WARNINGS+=("probe hint: upstream retry-after about ${probe_retry_after_minutes} min")
+    else
+      probe_retry_after_minutes=0
+    fi
+  fi
+fi
+
+# Probe-driven inferred failure: if runtime clearly indicates auth/quota pressure, quarantine the likely active profile immediately.
+if (( (probe_hint_quota==1 || probe_hint_auth==1 || probe_hint_provider==1) && ${#ALL_PROFILES[@]} > 0 )); then
+  inferred_fail_profile="$(AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" node - <<'NODE'
+const fs=require('fs');
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const all=split(process.env.ALL_PROFILES_JOINED);
+const provider=String(process.env.PROVIDER||'openai-codex');
+let store={};
+try{store=JSON.parse(fs.readFileSync(process.env.AUTH_PROFILES_PATH,'utf8'));}catch{}
+const order=(store&&store.order&&Array.isArray(store.order[provider]))?store.order[provider]:[];
+const lastGood=(store&&store.lastGood)?String(store.lastGood[provider]||'').trim():'';
+const inAll=(id)=>all.includes(id);
+let pick='';
+for(const id of order){ if(inAll(id)){ pick=id; break; } }
+if(!pick && lastGood && inAll(lastGood)) pick=lastGood;
+if(!pick && all.length>0) pick=all[0];
+if(pick) process.stdout.write(pick);
+NODE
+)"
+  if [[ -z "$inferred_fail_profile" ]]; then inferred_fail_profile="${ALL_PROFILES[0]:-}"; fi
+
+  if [[ -n "$inferred_fail_profile" ]]; then
+    already_failed=0
+    for fp in "${FAILED_PROFILES[@]:-}"; do [[ "$fp" == "$inferred_fail_profile" ]] && already_failed=1 && break; done
+    if (( already_failed==0 )); then FAILED_PROFILES+=("$inferred_fail_profile"); fi
+    WARNINGS+=("probe inferred failing profile: ${inferred_fail_profile#${PROFILE_PREFIX}}")
+
+    if [[ "$PROBE_HINT_FORCE_TRIP" == "1" ]]; then PROFILE_FORCE_TRIP["$inferred_fail_profile"]=1; fi
+
+    if [[ "$probe_retry_after_minutes" =~ ^[0-9]+$ && $probe_retry_after_minutes -gt 0 ]]; then
+      inferred_cd=$((probe_retry_after_minutes*60))
+      if [[ "$PROBE_HINT_MIN_COOLDOWN_SECONDS" =~ ^[0-9]+$ && $inferred_cd -lt $PROBE_HINT_MIN_COOLDOWN_SECONDS ]]; then inferred_cd=$PROBE_HINT_MIN_COOLDOWN_SECONDS; fi
+      if [[ "$PROBE_HINT_MAX_COOLDOWN_SECONDS" =~ ^[0-9]+$ && $PROBE_HINT_MAX_COOLDOWN_SECONDS -gt 0 && $inferred_cd -gt $PROBE_HINT_MAX_COOLDOWN_SECONDS ]]; then inferred_cd=$PROBE_HINT_MAX_COOLDOWN_SECONDS; fi
+      PROFILE_HINT_COOLDOWN["$inferred_fail_profile"]="$inferred_cd"
+    fi
+  fi
+fi
+
+if (( probe_hint_quota==1 || probe_hint_auth==1 )); then STATUS_HAS_AUTH=1; fi
+
+if ((${#FAILED_PROFILES[@]} > 0)); then mapfile -t FAILED_PROFILES < <(printf '%s\n' "${FAILED_PROFILES[@]}" | awk 'NF' | sort -u); fi
 
 # scoring + circuit breaker counters
 for p in "${ALL_PROFILES[@]:-}"; do
@@ -230,19 +319,22 @@ for p in "${ALL_PROFILES[@]:-}"; do
   fi
   score=$((score - fail*15)); (( score < 0 )) && score=0
   PROFILE_SCORE["$p"]="$score"
-
 done
 
 for f in "${FAILED_PROFILES[@]:-}"; do
   [[ -z "$f" ]] && continue
   cur="${PROFILE_FAILCOUNT[$f]:-0}"; cur=$((cur+1)); PROFILE_FAILCOUNT["$f"]="$cur"
 
-  # smarter failure typing: per-profile expiry first, then status hints (auth/network), then fallback other
+  # smarter failure typing: per-profile expiry first, then probe/status hints (auth/network), then fallback other
   rem="${PROFILE_REMAINING[$f]:-0}"
   fail_type="other"
   threshold="$CB_FAIL_THRESHOLD_OTHER"
   cooldown_secs="$CB_COOLDOWN_SECONDS_OTHER"
   if [[ "$rem" =~ ^-?[0-9]+$ ]] && (( rem < 0 )); then
+    fail_type="auth"
+    threshold="$CB_FAIL_THRESHOLD_AUTH"
+    cooldown_secs="$CB_COOLDOWN_SECONDS_AUTH"
+  elif (( probe_hint_auth==1 || probe_hint_quota==1 )); then
     fail_type="auth"
     threshold="$CB_FAIL_THRESHOLD_AUTH"
     cooldown_secs="$CB_COOLDOWN_SECONDS_AUTH"
@@ -261,6 +353,10 @@ for f in "${FAILED_PROFILES[@]:-}"; do
     (( CB_FAIL_THRESHOLD_DEFAULT > 0 )) && threshold="$CB_FAIL_THRESHOLD_DEFAULT"
     (( CB_COOLDOWN_SECONDS_DEFAULT > 0 )) && cooldown_secs="$CB_COOLDOWN_SECONDS_DEFAULT"
   fi
+
+  if [[ "${PROFILE_FORCE_TRIP[$f]:-0}" == "1" ]]; then threshold=1; fi
+  hint_cd="${PROFILE_HINT_COOLDOWN[$f]:-0}"
+  if [[ "$hint_cd" =~ ^[0-9]+$ ]] && (( hint_cd > cooldown_secs )); then cooldown_secs="$hint_cd"; fi
 
   if (( cur >= threshold )); then
     jitter=0
@@ -290,26 +386,6 @@ done
 if (( ${#ALL_PROFILES[@]} < RECOMMENDED_MIN )); then WARNINGS+=("profile count below recommendation: ${#ALL_PROFILES[@]} < ${RECOMMENDED_MIN}"); fi
 if (( ${#ALL_PROFILES[@]} > RECOMMENDED_MAX )); then WARNINGS+=("profile count above recommendation: ${#ALL_PROFILES[@]} > ${RECOMMENDED_MAX}"); fi
 
-# multi-probe
-probe1_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-a" --message "Reply exactly: ok" --thinking off --json 2>&1 || true)"
-probe2_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-b" --message "Reply exactly: pong" --thinking off --json 2>&1 || true)"
-probe1_ok=0; probe2_ok=0
-echo "$probe1_out" | grep -Eq '"text"\s*:\s*"ok"' && probe1_ok=1
-echo "$probe2_out" | grep -Eq '"text"\s*:\s*"pong"' && probe2_ok=1
-if (( probe1_ok==0 && probe2_ok==0 )); then
-  CRITICALS+=("both probes failed")
-elif (( probe1_ok==0 || probe2_ok==0 )); then
-  WARNINGS+=("one probe failed")
-fi
-if (( probe1_ok==0 || probe2_ok==0 )); then
-  probe_combined_lc="$(printf '%s\n%s\n' "$probe1_out" "$probe2_out" | tr '[:upper:]' '[:lower:]')"
-  if echo "$probe_combined_lc" | grep -Eqi 'usage[[:space:]]+limit|api[[:space:]]+rate[[:space:]]+limit[[:space:]]+reached'; then
-    WARNINGS+=("probe hint: quota/rate-limit pressure (not pure network outage)")
-  fi
-  if echo "$probe_combined_lc" | grep -Eqi 'authentication[[:space:]]+token[[:space:]]+invalidated|token[[:space:]]+invalidated'; then
-    WARNINGS+=("probe hint: auth token invalidated (not pure network outage)")
-  fi
-fi
 err_summary=""
 if (( probe1_ok==0 || probe2_ok==0 )); then
   err_summary="$(echo "$probe1_out | $probe2_out" | tr '\n' ' ' | sed -E 's/[A-Za-z0-9_\-]{24,}/[REDACTED]/g' | cut -c1-300)"
@@ -331,9 +407,42 @@ fi
 
 # compute state machine
 state="Healthy"
-if ((${#CRITICALS[@]} > 0)); then state="Degraded"; fi
-if ((${#WARNINGS[@]} > 0 && ${#CRITICALS[@]}==0)); then state="Degraded"; fi
+if ((${#CRITICALS[@]} > 0 || ${#WARNINGS[@]} > 0 || ${#FAILED_PROFILES[@]} > 0 || ${#EXPIRING_PROFILES[@]} > 0)); then state="Degraded"; fi
 if [[ "$AUTO_REPAIR" == "1" && "$state" == "Degraded" && "$DRY_RUN" != "1" ]]; then state="Repairing"; fi
+
+# immediate probe-driven failover when auto reorder is disabled
+if [[ "$AUTO_REORDER" != "1" && "$PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER" == "1" && -n "${inferred_fail_profile:-}" && ${#ALL_PROFILES[@]} -gt 0 ]]; then
+  mapfile -t probe_demote_order < <(
+    AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" FAILED_PROFILE="$inferred_fail_profile" ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" node - <<'NODE'
+const fs=require('fs');
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const all=split(process.env.ALL_PROFILES_JOINED);
+const provider=String(process.env.PROVIDER||'openai-codex');
+const failed=String(process.env.FAILED_PROFILE||'').trim();
+let store={};
+try{store=JSON.parse(fs.readFileSync(process.env.AUTH_PROFILES_PATH,'utf8'));}catch{}
+let order=(store&&store.order&&Array.isArray(store.order[provider]))?store.order[provider]:[];
+if(!Array.isArray(order) || order.length===0) order=[...all];
+const seen=new Set();
+const normalized=[];
+for(const id of order){ if(all.includes(id) && !seen.has(id)){ normalized.push(id); seen.add(id); } }
+for(const id of all){ if(!seen.has(id)){ normalized.push(id); seen.add(id); } }
+if(!failed || !normalized.includes(failed)){
+  for(const id of normalized) console.log(id);
+  process.exit(0);
+}
+const out=[...normalized.filter(x=>x!==failed), failed];
+for(const id of out) console.log(id);
+NODE
+  )
+  if ((${#probe_demote_order[@]} > 0)); then
+    if openclaw models auth order set --agent main --provider "$PROVIDER" "${probe_demote_order[@]}" >/dev/null 2>&1; then
+      WARNINGS+=("probe failover applied: demoted ${inferred_fail_profile#${PROFILE_PREFIX}} to order tail")
+    else
+      WARNINGS+=("probe failover apply failed for ${inferred_fail_profile#${PROFILE_PREFIX}}")
+    fi
+  fi
+fi
 
 # auto reorder by health score
 if [[ "$AUTO_REORDER" == "1" && ${#ALL_PROFILES[@]} -gt 0 ]]; then

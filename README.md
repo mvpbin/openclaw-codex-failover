@@ -260,6 +260,10 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_CB_COOLDOWN_SECONDS` | `3600` | 熔断冷却时长 |
 | `OCX_AUTO_REORDER` | `0` | 1=按健康分自动重排账号顺序 |
 | `OCX_AUTO_REORDER_ACCOUNT_DIVERSITY` | `1` | 1=按 `accountId` 交错重排，减少同账号连续命中 |
+| `OCX_PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER` | `1` | 1=即使 `AUTO_REORDER=0`，探针命中 auth/quota/`connected | error` 也会把疑似故障账号降到队尾 |
+| `OCX_PROBE_HINT_FORCE_TRIP` | `1` | 1=探针强信号直接触发熔断（不等累计到阈值） |
+| `OCX_PROBE_HINT_MIN_COOLDOWN_SECONDS` | `1800` | 探针推断熔断最短冷却时长 |
+| `OCX_PROBE_HINT_MAX_COOLDOWN_SECONDS` | `259200` | 探针推断熔断最长冷却时长（支持从 `Try again in ~NNN min` 推导） |
 | `OCX_AGENT_TIMEOUT_SECONDS` | `45` | 轻量调用超时 |
 | `OCX_CODEX_AUTH_PATH` | `/root/.codex/auth.json` | Codex 登录凭证路径（按运行用户调整） |
 | `OCX_AUTH_PROFILES_PATH` | `/root/.openclaw/agents/main/agent/auth-profiles.json` | accountId 回填来源（models status 不含 accountId 时使用） |

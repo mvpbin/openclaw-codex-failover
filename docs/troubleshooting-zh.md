@@ -63,3 +63,19 @@ OCX_PROXY_FALLBACK_BACKOFF_SECONDS=2
 ```
 
 说明：会按“多次尝试 + 线性退避”执行，不再一次失败就结束。
+
+## 10) 出现 `You have hit your ChatGPT usage limit ... token has been invalidated ... connected | error`，但容灾没动作
+先升级到最新脚本版本（本次修复已覆盖这类报错关键字）。
+
+可选开关（`/etc/openclaw-healthcheck.env`）：
+```env
+OCX_PROBE_HINT_FORCE_TRIP=1
+OCX_PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER=1
+OCX_PROBE_HINT_MIN_COOLDOWN_SECONDS=1800
+OCX_PROBE_HINT_MAX_COOLDOWN_SECONDS=259200
+```
+
+修复后的行为：
+- 探针命中上述信号时，会推断当前故障账号并立即熔断（不再等累计失败次数）。
+- 若日志里有 `Try again in ~NNN min`，会把冷却时间按 NNN 分钟换算（受 min/max 限制）。
+- 即使 `OCX_AUTO_REORDER=0`，也会把疑似故障账号降到顺序末尾，避免 Telegram 长时间无回复。
