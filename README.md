@@ -1,6 +1,6 @@
 # OpenClaw Codex 容灾机制（小白友好最终版）
 
-> Last updated: 2026-03-03
+> Last updated: 2026-03-04
 
 > 当前阶段：**Beta（可公开试用）**
 >
@@ -14,14 +14,15 @@
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
 
-## 最新增量（2026-03-03）
+## 最新增量（2026-03-04）
 
-- ✅ 修复容灾盲区：探针命中 `usage limit` / `token invalidated` / `connected | error` 时，立即推断并熔断疑似故障账号
-- ✅ 新增探针驱动冷却：支持从 `Try again in ~NNN min` 解析冷却时长（带 min/max 边界）
-- ✅ 即使 `OCX_AUTO_REORDER=0`，也可按探针信号把疑似故障账号降到顺序末尾，避免 Telegram 长时间无回复
-- ✅ 修复状态机误判：存在 failed/expiring profiles 时不会再显示 Healthy
+- ✅ 落地 failover v2：失败账号硬隔离（`OCX_HARD_DISABLE_FAILED=1`），生产轮换仅使用 active 池
+- ✅ 新增按账号联动隔离：某 profile 失败时，可按 `accountId` 隔离同账号全部 profiles（`OCX_HARD_DISABLE_FAILED_ACCOUNT=1`）
+- ✅ 新增受控恢复门槛：隔离账号需连续 N 轮健康才可回池（`OCX_RECOVERY_SUCCESS_ROUNDS`）
+- ✅ 新增 fail-open 保护阈值：当 active profiles / active accounts 过低时自动放宽，避免把可用性降到 0
+- ✅ 健康报告新增可观测字段：`activeProfiles` / `quarantinedProfiles` / `orderInputProfiles` / `activeAccountCount`
 
-> 这次是“避免卡死 + 保证可观测性 + 强化切换动作”的修复包。
+> 这次是“硬隔离 + 受控恢复 + 不中断服务”的修复包。
 
 ## 60 秒 Demo（已提供录屏）
 
@@ -389,9 +390,9 @@ OCX_CB_FAILCOUNT_DECAY_INTERVAL_SECONDS=1800
 - 快速开始：`docs/quickstart-zh.md`
 - 故障排查：`docs/troubleshooting-zh.md`
 - 变更记录：`CHANGELOG.md`
-- Release Notes (EN, latest): `docs/release-notes-2026-03-03.md`
-- 发布说明（中文，最新）: `docs/release-notes-2026-03-03.zh-CN.md`
-- 历史发布说明：`docs/release-notes-2026-03-02.md` / `docs/release-notes-2026-03-02.zh-CN.md`
+- Release Notes (EN, latest): `docs/release-notes-2026-03-04.md`
+- 发布说明（中文，最新）: `docs/release-notes-2026-03-04.zh-CN.md`
+- 历史发布说明：`docs/release-notes-2026-03-03.md` / `docs/release-notes-2026-03-03.zh-CN.md`
 
 ## License
 

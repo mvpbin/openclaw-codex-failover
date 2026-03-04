@@ -1,22 +1,22 @@
 # 发布文案（中英双语，复制即发）
 
-## 0) 主页更新通知（2026-03-03 增量）
+## 0) 主页更新通知（2026-03-04 增量）
 
 ### 中文
-主页与文档已更新（2026-03-03）：
-- 修复容灾盲区：命中 `usage limit` / `token invalidated` / `connected | error` 时立即触发探针驱动熔断
-- 新增探针冷却推导：支持从 `Try again in ~NNN min` 自动换算冷却时长
-- 新增 `OCX_PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER`：即使关闭 AUTO_REORDER，也会把疑似故障账号降到队尾
-- 修复状态机误判：有 failed/expiring 账号不再显示 Healthy
-- README 首页日期与最新增量同步至 2026-03-03
+主页与文档已更新（2026-03-04）：
+- 落地 failover v2：失败账号硬隔离，生产轮换仅使用 active 池
+- 新增按账号联动隔离：可按 `accountId` 隔离同账号全部 profiles
+- 新增受控恢复门槛：隔离账号需连续健康 N 轮才回池
+- 新增 fail-open 容量保护：active 过低时自动放宽隔离，避免服务断流
+- README 首页日期与最新增量同步至 2026-03-04
 
 ### English
-Homepage/docs updated (2026-03-03):
-- Fixed failover blind spot for probe outputs containing `usage limit`, `token invalidated`, and `connected | error`
-- Added probe-driven cooldown derivation from `Try again in ~NNN min`
-- Added `OCX_PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER` to demote suspected bad profiles even when auto reorder is off
-- Fixed state-machine false healthy reports when failed/expiring profiles exist
-- README homepage/update-date markers synced to 2026-03-03
+Homepage/docs updated (2026-03-04):
+- Shipped failover v2: hard isolation for failed profiles; production rotation now uses active pool only
+- Added account-level quarantine by `accountId` for sibling profiles
+- Added controlled recovery gate (N consecutive healthy rounds before rejoin)
+- Added fail-open capacity guard to prevent over-isolation outages
+- README homepage/update-date markers synced to 2026-03-04
 
 
 > 发布前请先按 README 的“隐私发布检查清单”做脱敏。
