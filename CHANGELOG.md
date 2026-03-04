@@ -20,6 +20,7 @@ All notable changes to this project are documented here.
 - Hardened `healthcheck_openai_codex_pool.sh` auto-reorder with default account-diversity interleaving (`OCX_AUTO_REORDER_ACCOUNT_DIVERSITY=1`), added `OCX_AUTH_PROFILES_PATH` fallback for accountId enrichment, skipped post-reorder sync override when auto-reorder is enabled, and added probe auth/quota pressure hints for clearer outage attribution.
 - Fixed probe-driven failover blind spot for runtime errors like `usage limit`, `token has been invalidated`, and `connected | error`: the script now infers and trips the likely failing profile immediately, supports retry-after-derived cooldown windows, and can demote the suspected profile even when `OCX_AUTO_REORDER=0`.
 - Updated homepage/docs metadata to 2026-03-03, including release notes and announcement copy templates for the new failover fix.
+- Implemented failover v2 hard-isolation flow in `healthcheck_openai_codex_pool.sh`: failed profiles are quarantined out of order input, optional account-level quarantine (`OCX_HARD_DISABLE_FAILED_ACCOUNT=1`) is applied by `accountId`, and quarantined profiles require consecutive healthy rounds (`OCX_RECOVERY_SUCCESS_ROUNDS`) before rejoining active rotation.
 
 ## [2026-02-18] - Hardening + usability pass
 

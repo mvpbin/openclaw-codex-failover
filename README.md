@@ -263,6 +263,12 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_PROBE_HINT_FORCE_TRIP` | `1` | 1=探针强信号直接触发熔断（不等累计到阈值） |
 | `OCX_PROBE_HINT_MIN_COOLDOWN_SECONDS` | `1800` | 探针推断熔断最短冷却时长 |
 | `OCX_PROBE_HINT_MAX_COOLDOWN_SECONDS` | `259200` | 探针推断熔断最长冷却时长（支持从 `Try again in ~NNN min` 推导） |
+| `OCX_HARD_DISABLE_FAILED` | `1` | 1=硬隔离失败账号，仅 active 池参与轮换 |
+| `OCX_HARD_DISABLE_FAILED_ACCOUNT` | `1` | 1=按 accountId 联动隔离同账号 profiles |
+| `OCX_ACCOUNT_QUARANTINE_SECONDS` | `7200` | 同账号联动隔离时长（秒） |
+| `OCX_RECOVERY_SUCCESS_ROUNDS` | `2` | 恢复门槛：连续 N 轮健康才放回 active 池 |
+| `OCX_HARD_DISABLE_MIN_ACTIVE_PROFILES` | `2` | active profiles 低于阈值时自动 fail-open |
+| `OCX_HARD_DISABLE_MIN_ACTIVE_ACCOUNTS` | `1` | active account 数低于阈值时自动 fail-open |
 | `OCX_AGENT_TIMEOUT_SECONDS` | `45` | 轻量调用超时 |
 | `OCX_CODEX_AUTH_PATH` | `/root/.codex/auth.json` | Codex 登录凭证路径（按运行用户调整） |
 | `OCX_AUTH_PROFILES_PATH` | `/root/.openclaw/agents/main/agent/auth-profiles.json` | accountId 回填来源（models status 不含 accountId 时使用） |

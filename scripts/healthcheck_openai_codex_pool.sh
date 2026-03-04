@@ -59,6 +59,12 @@ PROBE_HINT_FORCE_TRIP="${OCX_PROBE_HINT_FORCE_TRIP:-1}"
 PROBE_HINT_MIN_COOLDOWN_SECONDS="${OCX_PROBE_HINT_MIN_COOLDOWN_SECONDS:-1800}"
 PROBE_HINT_MAX_COOLDOWN_SECONDS="${OCX_PROBE_HINT_MAX_COOLDOWN_SECONDS:-259200}"
 PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER="${OCX_PROBE_HINT_DEMOTE_WITHOUT_AUTO_REORDER:-1}"
+HARD_DISABLE_FAILED="${OCX_HARD_DISABLE_FAILED:-1}"
+HARD_DISABLE_FAILED_ACCOUNT="${OCX_HARD_DISABLE_FAILED_ACCOUNT:-1}"
+ACCOUNT_QUARANTINE_SECONDS="${OCX_ACCOUNT_QUARANTINE_SECONDS:-7200}"
+RECOVERY_SUCCESS_ROUNDS="${OCX_RECOVERY_SUCCESS_ROUNDS:-2}"
+HARD_DISABLE_MIN_ACTIVE_PROFILES="${OCX_HARD_DISABLE_MIN_ACTIVE_PROFILES:-2}"
+HARD_DISABLE_MIN_ACTIVE_ACCOUNTS="${OCX_HARD_DISABLE_MIN_ACTIVE_ACCOUNTS:-1}"
 
 mkdir -p "$REPORT_DIR" "$RUN_DIR" "$CONFIG_HISTORY_DIR"
 DATE_UTC="$(date -u +%Y%m%d)"
@@ -67,8 +73,8 @@ NOW_TS="$(date +%s)"
 LOG_FILE="$REPORT_DIR/openai_codex_health_${DATE_UTC}.log"
 LATEST_JSON="$REPORT_DIR/openai_codex_health_latest.json"
 
-WARNINGS=(); CRITICALS=(); RELOGIN_CMDS=(); FAILED_PROFILES=(); EXPIRING_PROFILES=(); ALL_PROFILES=(); UNUSABLE_PROFILES=(); COOLDOWN_PROFILES=();
-declare -A PROFILE_EMAIL_MAP PROFILE_REMAINING PROFILE_SCORE PROFILE_FAILCOUNT PROFILE_COOLDOWN_UNTIL PROFILE_ACCOUNT_MAP PROFILE_HINT_COOLDOWN PROFILE_FORCE_TRIP
+WARNINGS=(); CRITICALS=(); RELOGIN_CMDS=(); FAILED_PROFILES=(); EXPIRING_PROFILES=(); ALL_PROFILES=(); UNUSABLE_PROFILES=(); COOLDOWN_PROFILES=(); ACTIVE_PROFILES=(); QUARANTINED_PROFILES=(); QUARANTINED_ACCOUNTS=(); ORDER_INPUT_PROFILES=();
+declare -A PROFILE_EMAIL_MAP PROFILE_REMAINING PROFILE_SCORE PROFILE_FAILCOUNT PROFILE_COOLDOWN_UNTIL PROFILE_ACCOUNT_MAP PROFILE_HINT_COOLDOWN PROFILE_FORCE_TRIP PROFILE_RECOVERY_STREAK PROFILE_QUARANTINED
 
 SIMULATE_UNUSABLE="${SIMULATE_UNUSABLE:-}"
 [[ "${1:-}" == "--simulate-unusable" ]] && SIMULATE_UNUSABLE="${2:-}"
@@ -99,16 +105,21 @@ fi
 
 # load persistent pool state
 if [[ -f "$POOL_STATE_FILE" ]]; then
-  while IFS=$'\t' read -r k fail cooldown; do
+  while IFS=$'\t' read -r k fail cooldown recovery quarantined; do
     [[ -n "$k" ]] || continue
     PROFILE_FAILCOUNT["$k"]="${fail:-0}"
     PROFILE_COOLDOWN_UNTIL["$k"]="${cooldown:-0}"
+    PROFILE_RECOVERY_STREAK["$k"]="${recovery:-0}"
+    PROFILE_QUARANTINED["$k"]="${quarantined:-0}"
   done < <(STATE="$POOL_STATE_FILE" node - <<'NODE'
 const fs=require('fs');
 try{
   const s=JSON.parse(fs.readFileSync(process.env.STATE,'utf8'));
   const p=s.profiles||{};
-  for(const k of Object.keys(p)) console.log(`${k}\t${Number(p[k].failCount||0)}\t${Number(p[k].cooldownUntil||0)}`);
+  for(const k of Object.keys(p)){
+    const row=p[k]||{};
+    console.log(`${k}\t${Number(row.failCount||0)}\t${Number(row.cooldownUntil||0)}\t${Number(row.recoveryStreak||0)}\t${Number(row.quarantined||0)}`);
+  }
 }catch{}
 NODE
 )
@@ -376,11 +387,134 @@ for f in "${FAILED_PROFILES[@]:-}"; do
   RELOGIN_CMDS+=("$short: codex logout && codex -c cli_auth_credentials_store='file' login --device-auth && $BASE_DIR/scripts/import_codex_auth_to_openclaw.sh $f main $CODEX_AUTH_PATH")
 done
 
-# reset fail count for healthy profiles
+# quarantine failed-account siblings (account-level isolation)
+if [[ "$HARD_DISABLE_FAILED" == "1" && "$HARD_DISABLE_FAILED_ACCOUNT" == "1" && "$ACCOUNT_QUARANTINE_SECONDS" =~ ^[0-9]+$ && $ACCOUNT_QUARANTINE_SECONDS -gt 0 ]]; then
+  declare -A _qacc_seen
+  for f in "${FAILED_PROFILES[@]:-}"; do
+    aid="${PROFILE_ACCOUNT_MAP[$f]:-}"
+    [[ -n "$aid" ]] || continue
+    [[ -n "${_qacc_seen[$aid]:-}" ]] && continue
+    _qacc_seen["$aid"]=1
+    QUARANTINED_ACCOUNTS+=("$aid")
+    target_cd=$((NOW_TS + ACCOUNT_QUARANTINE_SECONDS))
+    for p in "${ALL_PROFILES[@]:-}"; do
+      [[ "${PROFILE_ACCOUNT_MAP[$p]:-}" == "$aid" ]] || continue
+      cur_cd="${PROFILE_COOLDOWN_UNTIL[$p]:-0}"
+      [[ "$cur_cd" =~ ^[0-9]+$ ]] || cur_cd=0
+      if (( target_cd > cur_cd )); then PROFILE_COOLDOWN_UNTIL["$p"]="$target_cd"; fi
+      PROFILE_QUARANTINED["$p"]=1
+      PROFILE_RECOVERY_STREAK["$p"]=0
+    done
+  done
+fi
+
+# recovery gate: quarantined profiles need N consecutive healthy rounds after cooldown expiry
 for p in "${ALL_PROFILES[@]:-}"; do
-  bad=0; for f in "${FAILED_PROFILES[@]:-}"; do [[ "$p" == "$f" ]] && bad=1; done
-  (( bad==0 )) && PROFILE_FAILCOUNT["$p"]=0
+  bad=0
+  for f in "${FAILED_PROFILES[@]:-}"; do [[ "$p" == "$f" ]] && bad=1 && break; done
+
+  rem="${PROFILE_REMAINING[$p]:-0}"
+  rem_bad=0
+  if [[ "$rem" =~ ^-?[0-9]+$ ]] && (( rem < 0 )); then rem_bad=1; fi
+
+  unusable=0
+  for u in "${UNUSABLE_PROFILES[@]:-}"; do [[ "$p" == "$u" ]] && unusable=1 && break; done
+
+  healthy_signal=1
+  (( bad==1 || rem_bad==1 || unusable==1 )) && healthy_signal=0
+
+  cooldown_until="${PROFILE_COOLDOWN_UNTIL[$p]:-0}"
+  [[ "$cooldown_until" =~ ^[0-9]+$ ]] || cooldown_until=0
+
+  # any direct failure immediately enters quarantine
+  if (( healthy_signal == 0 )); then
+    PROFILE_QUARANTINED["$p"]=1
+    PROFILE_RECOVERY_STREAK["$p"]=0
+    continue
+  fi
+
+  # cooldown still active -> keep quarantined
+  if (( cooldown_until > NOW_TS )); then
+    PROFILE_QUARANTINED["$p"]=1
+    PROFILE_RECOVERY_STREAK["$p"]=0
+    continue
+  fi
+
+  if [[ "${PROFILE_QUARANTINED[$p]:-0}" == "1" ]]; then
+    streak="${PROFILE_RECOVERY_STREAK[$p]:-0}"
+    [[ "$streak" =~ ^[0-9]+$ ]] || streak=0
+    streak=$((streak+1))
+    PROFILE_RECOVERY_STREAK["$p"]="$streak"
+    if (( streak >= RECOVERY_SUCCESS_ROUNDS )); then
+      PROFILE_QUARANTINED["$p"]=0
+      PROFILE_RECOVERY_STREAK["$p"]=0
+      PROFILE_FAILCOUNT["$p"]=0
+      PROFILE_COOLDOWN_UNTIL["$p"]=0
+    fi
+  else
+    PROFILE_RECOVERY_STREAK["$p"]=0
+    PROFILE_FAILCOUNT["$p"]=0
+  fi
 done
+
+# build active vs quarantined pool and enforce hard isolation for order input
+active_account_count=0
+ACTIVE_PROFILES=("${ALL_PROFILES[@]:-}")
+QUARANTINED_PROFILES=()
+ORDER_INPUT_PROFILES=("${ALL_PROFILES[@]:-}")
+if [[ "$HARD_DISABLE_FAILED" == "1" ]]; then
+  ACTIVE_PROFILES=(); QUARANTINED_PROFILES=()
+  for p in "${ALL_PROFILES[@]:-}"; do
+    q="${PROFILE_QUARANTINED[$p]:-0}"
+    cd="${PROFILE_COOLDOWN_UNTIL[$p]:-0}"
+    [[ "$cd" =~ ^[0-9]+$ ]] || cd=0
+    if (( cd > NOW_TS )); then q=1; fi
+    if [[ "$q" == "1" ]]; then
+      QUARANTINED_PROFILES+=("$p")
+    else
+      ACTIVE_PROFILES+=("$p")
+    fi
+  done
+
+  active_account_count="$(ACTIVE_JOINED="$(printf '%s\n' "${ACTIVE_PROFILES[@]:-}")" ACCOUNT_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do [[ -n "${PROFILE_ACCOUNT_MAP[$p]:-}" ]] && echo "$p=${PROFILE_ACCOUNT_MAP[$p]}"; done)" node - <<'NODE'
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const mapFrom=(s)=>{const o={}; for(const l of split(s)){ const i=l.indexOf('='); if(i>0) o[l.slice(0,i).trim()]=l.slice(i+1).trim(); } return o; };
+const active=split(process.env.ACTIVE_JOINED);
+const accMap=mapFrom(process.env.ACCOUNT_JOINED);
+const set=new Set();
+for(const p of active){
+  const aid=String(accMap[p]||'').trim();
+  set.add(aid ? `acc:${aid}` : `profile:${p}`);
+}
+process.stdout.write(String(set.size));
+NODE
+)"
+  [[ "$active_account_count" =~ ^[0-9]+$ ]] || active_account_count=0
+
+  if (( ${#ACTIVE_PROFILES[@]} >= HARD_DISABLE_MIN_ACTIVE_PROFILES && active_account_count >= HARD_DISABLE_MIN_ACTIVE_ACCOUNTS )); then
+    ORDER_INPUT_PROFILES=("${ACTIVE_PROFILES[@]:-}")
+  else
+    ORDER_INPUT_PROFILES=("${ALL_PROFILES[@]:-}")
+    WARNINGS+=("hard isolate fail-open: active=${#ACTIVE_PROFILES[@]} (need >=${HARD_DISABLE_MIN_ACTIVE_PROFILES}), accounts=${active_account_count} (need >=${HARD_DISABLE_MIN_ACTIVE_ACCOUNTS})")
+  fi
+fi
+
+if (( active_account_count == 0 && ${#ACTIVE_PROFILES[@]} > 0 )); then
+  active_account_count="$(ACTIVE_JOINED="$(printf '%s\n' "${ACTIVE_PROFILES[@]:-}")" ACCOUNT_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do [[ -n "${PROFILE_ACCOUNT_MAP[$p]:-}" ]] && echo "$p=${PROFILE_ACCOUNT_MAP[$p]}"; done)" node - <<'NODE'
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const mapFrom=(s)=>{const o={}; for(const l of split(s)){ const i=l.indexOf('='); if(i>0) o[l.slice(0,i).trim()]=l.slice(i+1).trim(); } return o; };
+const active=split(process.env.ACTIVE_JOINED);
+const accMap=mapFrom(process.env.ACCOUNT_JOINED);
+const set=new Set();
+for(const p of active){
+  const aid=String(accMap[p]||'').trim();
+  set.add(aid ? `acc:${aid}` : `profile:${p}`);
+}
+process.stdout.write(String(set.size));
+NODE
+)"
+  [[ "$active_account_count" =~ ^[0-9]+$ ]] || active_account_count=0
+fi
 
 # recommendations
 if (( ${#ALL_PROFILES[@]} < RECOMMENDED_MIN )); then WARNINGS+=("profile count below recommendation: ${#ALL_PROFILES[@]} < ${RECOMMENDED_MIN}"); fi
@@ -445,12 +579,12 @@ NODE
 fi
 
 # auto reorder by health score
-if [[ "$AUTO_REORDER" == "1" && ${#ALL_PROFILES[@]} -gt 0 ]]; then
+if [[ "$AUTO_REORDER" == "1" && ${#ORDER_INPUT_PROFILES[@]} -gt 0 ]]; then
   mapfile -t sorted_profiles < <(
     AUTO_REORDER_ACCOUNT_DIVERSITY="$AUTO_REORDER_ACCOUNT_DIVERSITY" \
-    ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" \
-    SCORE_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do echo "$p=${PROFILE_SCORE[$p]:-0}"; done)" \
-    ACCOUNT_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do [[ -n "${PROFILE_ACCOUNT_MAP[$p]:-}" ]] && echo "$p=${PROFILE_ACCOUNT_MAP[$p]}"; done)" \
+    ALL_PROFILES_JOINED="$(printf '%s\n' "${ORDER_INPUT_PROFILES[@]:-}")" \
+    SCORE_JOINED="$(for p in "${ORDER_INPUT_PROFILES[@]:-}"; do echo "$p=${PROFILE_SCORE[$p]:-0}"; done)" \
+    ACCOUNT_JOINED="$(for p in "${ORDER_INPUT_PROFILES[@]:-}"; do [[ -n "${PROFILE_ACCOUNT_MAP[$p]:-}" ]] && echo "$p=${PROFILE_ACCOUNT_MAP[$p]}"; done)" \
     node - <<'NODE'
 const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
 const mapFrom=(s)=>{const o={}; for(const l of split(s)){const i=l.indexOf('='); if(i>0) o[l.slice(0,i).trim()]=l.slice(i+1).trim();} return o;};
@@ -495,6 +629,15 @@ NODE
   fi
 fi
 
+# enforce hard-isolation order when auto reorder is disabled
+if [[ "$AUTO_REORDER" != "1" && "$HARD_DISABLE_FAILED" == "1" && ${#ORDER_INPUT_PROFILES[@]} -gt 0 ]]; then
+  if openclaw models auth order set --agent main --provider "$PROVIDER" "${ORDER_INPUT_PROFILES[@]}" >/dev/null 2>&1; then
+    WARNINGS+=("hard isolate order applied (auto reorder disabled)")
+  else
+    WARNINGS+=("hard isolate order apply failed")
+  fi
+fi
+
 # sync auth order always best effort
 sync_note=""
 if [[ "$AUTO_REORDER" == "1" ]]; then
@@ -528,13 +671,21 @@ if (( exit_code==0 )); then state="Recovered"; fi
 
 # persist pool state
 POOL_STATE_FILE="$POOL_STATE_FILE" NOW_TS="$NOW_TS" STATE="$state" ANOMALY_CLASS="$ANOMALY_CLASS" REPAIR_ATTEMPTED="$repair_attempted" \
-PROFILES_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do echo "$p|${PROFILE_FAILCOUNT[$p]:-0}|${PROFILE_COOLDOWN_UNTIL[$p]:-0}"; done)" node - <<'NODE'
+PROFILES_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do echo "$p|${PROFILE_FAILCOUNT[$p]:-0}|${PROFILE_COOLDOWN_UNTIL[$p]:-0}|${PROFILE_RECOVERY_STREAK[$p]:-0}|${PROFILE_QUARANTINED[$p]:-0}"; done)" node - <<'NODE'
 const fs=require('fs');
 const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
 const lines=split(process.env.PROFILES_JOINED);
 let prev={}; try{prev=JSON.parse(fs.readFileSync(process.env.POOL_STATE_FILE,'utf8'));}catch{}
 const profiles={};
-for(const l of lines){const [k,f,c]=l.split('|'); if(k) profiles[k]={failCount:Number(f||0),cooldownUntil:Number(c||0)};}
+for(const l of lines){
+  const [k,f,c,r,q]=l.split('|');
+  if(k) profiles[k]={
+    failCount:Number(f||0),
+    cooldownUntil:Number(c||0),
+    recoveryStreak:Number(r||0),
+    quarantined:Number(q||0)
+  };
+}
 const out={
   ts:new Date().toISOString(),
   state:process.env.STATE,
@@ -559,7 +710,7 @@ NODE
 
 # report
 REPORT_JSON="$LATEST_JSON" TS_UTC="$TS_UTC" PROVIDER="$PROVIDER" PROFILE_COUNT="$profile_count" EXIT_CODE="$exit_code" SYNC_NOTE="$sync_note" AGENT_ERR="$err_summary" REC_MIN="$RECOMMENDED_MIN" REC_MAX="$RECOMMENDED_MAX" STATE="$state" ANOMALY_CLASS="$ANOMALY_CLASS" \
-ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" FAILED_JOINED="$(printf '%s\n' "${FAILED_PROFILES[@]:-}")" WARN_JOINED="$(printf '%s\n' "${WARNINGS[@]:-}")" CRIT_JOINED="$(printf '%s\n' "${CRITICALS[@]:-}")" EXP_JOINED="$(printf '%s\n' "${EXPIRING_PROFILES[@]:-}")" RELOGIN_JOINED="$(printf '%s\n' "${RELOGIN_CMDS[@]:-}")" \
+ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" ACTIVE_JOINED="$(printf '%s\n' "${ACTIVE_PROFILES[@]:-}")" QUARANTINED_JOINED="$(printf '%s\n' "${QUARANTINED_PROFILES[@]:-}")" QUARANTINED_ACCOUNTS_JOINED="$(printf '%s\n' "${QUARANTINED_ACCOUNTS[@]:-}")" ORDER_INPUT_JOINED="$(printf '%s\n' "${ORDER_INPUT_PROFILES[@]:-}")" ACTIVE_ACCOUNT_COUNT="$active_account_count" FAILED_JOINED="$(printf '%s\n' "${FAILED_PROFILES[@]:-}")" WARN_JOINED="$(printf '%s\n' "${WARNINGS[@]:-}")" CRIT_JOINED="$(printf '%s\n' "${CRITICALS[@]:-}")" EXP_JOINED="$(printf '%s\n' "${EXPIRING_PROFILES[@]:-}")" RELOGIN_JOINED="$(printf '%s\n' "${RELOGIN_CMDS[@]:-}")" \
 EMAIL_MAP_JOINED="$(for k in "${!PROFILE_EMAIL_MAP[@]}"; do echo "$k=${PROFILE_EMAIL_MAP[$k]}"; done)" SCORE_JOINED="$(for k in "${!PROFILE_SCORE[@]}"; do echo "$k=${PROFILE_SCORE[$k]}"; done)" DRY_RUN="$DRY_RUN" node - <<'NODE'
 const fs=require('fs');
 const split=s=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
@@ -575,6 +726,12 @@ const report={
   provider:process.env.PROVIDER,
   discoveredProfiles:split(process.env.ALL_PROFILES_JOINED),
   discoveredCount:Number(process.env.PROFILE_COUNT||0),
+  activeProfiles:split(process.env.ACTIVE_JOINED),
+  activeProfileCount:split(process.env.ACTIVE_JOINED).length,
+  activeAccountCount:Number(process.env.ACTIVE_ACCOUNT_COUNT||0),
+  quarantinedProfiles:split(process.env.QUARANTINED_JOINED),
+  quarantinedAccounts:split(process.env.QUARANTINED_ACCOUNTS_JOINED),
+  orderInputProfiles:split(process.env.ORDER_INPUT_JOINED),
   profileScores:scoreMap,
   recommendations:{accountCount:`建议 ${process.env.REC_MIN}-${process.env.REC_MAX} 个账号池（过少影响容灾，过多增加维护成本）`},
   failedProfiles:failed,
@@ -594,6 +751,7 @@ NODE
 log "${PROVIDER} health summary"
 log "state: $state | class: $ANOMALY_CLASS"
 log "profiles discovered: ${#ALL_PROFILES[@]}"
+log "active profiles: ${#ACTIVE_PROFILES[@]} | active accounts: ${active_account_count:-0} | quarantined: ${#QUARANTINED_PROFILES[@]}"
 log "failed profiles: ${FAILED_PROFILES[*]:-none}"
 log "warnings: ${WARNINGS[*]:-none}"
 log "criticals: ${CRITICALS[*]:-none}"
