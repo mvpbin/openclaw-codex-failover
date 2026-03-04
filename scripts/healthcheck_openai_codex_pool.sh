@@ -65,6 +65,9 @@ ACCOUNT_QUARANTINE_SECONDS="${OCX_ACCOUNT_QUARANTINE_SECONDS:-7200}"
 RECOVERY_SUCCESS_ROUNDS="${OCX_RECOVERY_SUCCESS_ROUNDS:-2}"
 HARD_DISABLE_MIN_ACTIVE_PROFILES="${OCX_HARD_DISABLE_MIN_ACTIVE_PROFILES:-2}"
 HARD_DISABLE_MIN_ACTIVE_ACCOUNTS="${OCX_HARD_DISABLE_MIN_ACTIVE_ACCOUNTS:-1}"
+PROFILE_SOURCE="${OCX_PROFILE_SOURCE:-auth-store}"  # auth-store | models-status
+ORDER_WRITE_MODE="${OCX_ORDER_WRITE_MODE:-auth-file}" # auth-file | cli
+DISABLE_PROBES="${OCX_DISABLE_PROBES:-1}"             # 1=skip openclaw agent probe calls
 
 mkdir -p "$REPORT_DIR" "$RUN_DIR" "$CONFIG_HISTORY_DIR"
 DATE_UTC="$(date -u +%Y%m%d)"
@@ -83,6 +86,37 @@ SIMULATE_UNUSABLE="${SIMULATE_UNUSABLE:-}"
 log(){ echo "[$(date -u +%H:%M:%S)] $*" | tee -a "$LOG_FILE"; }
 mask_email(){ local e="$1"; [[ "$e" == *"@"* ]] && { local n="${e%@*}" d="${e#*@}"; [[ ${#n} -gt 1 ]] && echo "${n:0:1}***@${d}" || echo "***@${d}"; } || echo "$e"; }
 profile_display(){ local p="$1" e="${PROFILE_EMAIL_MAP[$p]:-}"; [[ -n "$e" ]] && echo "${p#${PROFILE_PREFIX}}($(mask_email "$e"))" || echo "${p#${PROFILE_PREFIX}}"; }
+
+apply_order_override(){
+  local arr=("$@")
+  (( ${#arr[@]} > 0 )) || return 0
+
+  if [[ "$ORDER_WRITE_MODE" == "auth-file" && -f "$AUTH_PROFILES_PATH" ]]; then
+    if ORDER_JOINED="$(printf '%s\n' "${arr[@]}")" AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" node - <<'NODE' >/dev/null 2>&1
+const fs=require('fs');
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const path=process.env.AUTH_PROFILES_PATH;
+const provider=String(process.env.PROVIDER||'openai-codex');
+const order=split(process.env.ORDER_JOINED);
+let j={};
+try{j=JSON.parse(fs.readFileSync(path,'utf8'));}catch{process.exit(2)}
+if(!j || typeof j!=='object') j={};
+if(!j.order || typeof j.order!=='object') j.order={};
+j.order[provider]=order;
+if(!j.lastGood || typeof j.lastGood!=='object') j.lastGood={};
+if(!j.lastGood[provider] || !order.includes(j.lastGood[provider])){
+  if(order.length>0) j.lastGood[provider]=order[0];
+}
+fs.writeFileSync(path, JSON.stringify(j,null,2));
+NODE
+    then
+      return 0
+    fi
+    return 1
+  fi
+
+  openclaw models auth order set --agent main --provider "$PROVIDER" "${arr[@]}" >/dev/null 2>&1
+}
 
 # lock
 exec 9>"$LOCK_FILE"
@@ -143,10 +177,41 @@ if [[ "$CB_FAILCOUNT_DECAY_ENABLED" == "1" && "$CB_FAILCOUNT_DECAY_INTERVAL_SECO
   done
 fi
 
-status_json="$(openclaw models status --json 2>/dev/null || true)"
-if [[ -z "$status_json" ]]; then CRITICALS+=("openclaw models status --json failed"); fi
+status_json=""
+if [[ "$PROFILE_SOURCE" == "auth-store" && -f "$AUTH_PROFILES_PATH" ]]; then
+  parsed_json="$(AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" PREFIX="$PROFILE_PREFIX" NOW_TS="$NOW_TS" node - <<'NODE'
+const fs=require('fs');
+const providerName=process.env.PROVIDER||'openai-codex';
+const prefix=process.env.PREFIX||'openai-codex:';
+const nowSec=Number(process.env.NOW_TS||0);
+let store={};
+try{store=JSON.parse(fs.readFileSync(process.env.AUTH_PROFILES_PATH,'utf8'));}catch{}
+const map=(store&&store.profiles&&typeof store.profiles==='object')?store.profiles:{};
+const labels=[];
+const profiles=[];
+for(const pid of Object.keys(map)){
+  if(!String(pid).startsWith(prefix)) continue;
+  const row=map[pid]||{};
+  const expRaw=Number(row.expires||0);
+  const expSec = expRaw>1e12 ? Math.floor(expRaw/1000) : Math.floor(expRaw||0);
+  const remMs = expSec>0 ? Math.max(0,(expSec-nowSec)*1000) : 0;
+  profiles.push({profileId:pid,provider:providerName,remainingMs:remMs,accountId:row.accountId||''});
+  labels.push(`${pid}=OAuth`);
+}
+console.log(JSON.stringify({
+  providersWithOAuth:[providerName],
+  providerProfileCount:profiles.length,
+  oauthProfiles:profiles,
+  unusableProfiles:[],
+  labels
+}));
+NODE
+)"
+else
+  status_json="$(openclaw models status --json 2>/dev/null || true)"
+  if [[ -z "$status_json" ]]; then CRITICALS+=("openclaw models status --json failed"); fi
 
-parsed_json="$(STATUS_JSON="$status_json" PROVIDER="$PROVIDER" PREFIX="$PROFILE_PREFIX" node - <<'NODE'
+  parsed_json="$(STATUS_JSON="$status_json" PROVIDER="$PROVIDER" PREFIX="$PROFILE_PREFIX" node - <<'NODE'
 const raw=process.env.STATUS_JSON||'{}'; const providerName=process.env.PROVIDER||'openai-codex'; const prefix=process.env.PREFIX||'openai-codex:';
 let obj={}; try{obj=JSON.parse(raw);}catch{}
 const provider=(obj.auth?.providers||[]).find(p=>p.provider===providerName)||{};
@@ -156,6 +221,7 @@ const labels=provider?.profiles?.labels||[];
 console.log(JSON.stringify({providersWithOAuth:obj.auth?.providersWithOAuth||[],providerProfileCount:Number(provider?.profiles?.count||0),oauthProfiles:profiles,unusableProfiles:unusable,labels}));
 NODE
 )"
+fi
 
 providers_with_oauth="$(PARSED="$parsed_json" node -e "const d=JSON.parse(process.env.PARSED||'{}');console.log((d.providersWithOAuth||[]).join('\\n'));" )"
 if ! echo "$providers_with_oauth" | grep -qi "^${PROVIDER}"; then CRITICALS+=("providersWithOAuth missing ${PROVIDER}"); fi
@@ -208,6 +274,35 @@ for(const p of (d.oauthProfiles||[])){
 NODE
 )
 
+# reconcile profile source of truth: auth store may contain profiles not surfaced by models status yet
+if [[ -f "$AUTH_PROFILES_PATH" ]]; then
+  mapfile -t AUTH_STORE_PROFILES < <(AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PREFIX="$PROFILE_PREFIX" node - <<'NODE'
+const fs=require('fs');
+const prefix=String(process.env.PREFIX||'openai-codex:');
+let store={};
+try{store=JSON.parse(fs.readFileSync(process.env.AUTH_PROFILES_PATH,'utf8'));}catch{}
+const map=(store&&store.profiles&&typeof store.profiles==='object')?store.profiles:{};
+for(const pid of Object.keys(map)) if(String(pid).startsWith(prefix)) console.log(pid);
+NODE
+)
+
+  if (( ${#AUTH_STORE_PROFILES[@]} > ${#ALL_PROFILES[@]} )); then
+    WARNINGS+=("profile source mismatch: status=${#ALL_PROFILES[@]} auth_store=${#AUTH_STORE_PROFILES[@]} (merge auth_store)")
+  fi
+
+  declare -A _seen_profiles
+  for p in "${ALL_PROFILES[@]:-}"; do [[ -n "$p" ]] && _seen_profiles["$p"]=1; done
+  for p in "${AUTH_STORE_PROFILES[@]:-}"; do
+    [[ -n "$p" ]] || continue
+    if [[ -z "${_seen_profiles[$p]:-}" ]]; then
+      ALL_PROFILES+=("$p")
+      PROFILE_REMAINING["$p"]=0
+      _seen_profiles["$p"]=1
+      WARNINGS+=("merged profile from auth store: ${p#${PROFILE_PREFIX}}")
+    fi
+  done
+fi
+
 # fallback: models status may not expose accountId; read from auth-profiles store when available
 if [[ -f "$AUTH_PROFILES_PATH" && ${#ALL_PROFILES[@]} -gt 0 ]]; then
   while IFS=$'\t' read -r pid aid; do
@@ -240,48 +335,52 @@ if echo "$status_json" | grep -Eqi 'timeout|connect|dns|network|tls|econn|enotfo
 
 
 # multi-probe (run before scoring so probe hints can participate in breaker decisions)
-probe1_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-a" --message "Reply exactly: ok" --thinking off --json 2>&1 || true)"
-probe2_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-b" --message "Reply exactly: pong" --thinking off --json 2>&1 || true)"
-probe1_ok=0; probe2_ok=0
+probe1_out=""; probe2_out=""
+probe1_ok=1; probe2_ok=1
 probe_hint_quota=0; probe_hint_auth=0; probe_hint_provider=0
 probe_retry_after_minutes=0
 probe_combined_lc=""
 inferred_fail_profile=""
-echo "$probe1_out" | grep -Eq '"text"\s*:\s*"ok"' && probe1_ok=1
-echo "$probe2_out" | grep -Eq '"text"\s*:\s*"pong"' && probe2_ok=1
-if (( probe1_ok==0 && probe2_ok==0 )); then
-  CRITICALS+=("both probes failed")
-elif (( probe1_ok==0 || probe2_ok==0 )); then
-  WARNINGS+=("one probe failed")
-fi
-if (( probe1_ok==0 || probe2_ok==0 )); then
-  probe_combined_lc="$(printf '%s\n%s\n' "$probe1_out" "$probe2_out" | tr '[:upper:]' '[:lower:]')"
-  if echo "$probe_combined_lc" | grep -Eqi 'you have hit your chatgpt usage limit|usage[[:space:]]+limit|api[[:space:]]+rate[[:space:]]+limit([[:space:]]+reached)?|rate[[:space:]-]*limit'; then
-    probe_hint_quota=1
-    WARNINGS+=("probe hint: quota/rate-limit pressure (not pure network outage)")
+
+if [[ "$DISABLE_PROBES" != "1" ]]; then
+  probe1_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-a" --message "Reply exactly: ok" --thinking off --json 2>&1 || true)"
+  probe2_out="$(timeout "$OPENCLAW_AGENT_TIMEOUT" openclaw agent --session-id "healthcheck-$(date -u +%Y%m%dT%H%M%SZ)-b" --message "Reply exactly: pong" --thinking off --json 2>&1 || true)"
+  probe1_ok=0; probe2_ok=0
+  echo "$probe1_out" | grep -Eq '"text"\s*:\s*"ok"' && probe1_ok=1
+  echo "$probe2_out" | grep -Eq '"text"\s*:\s*"pong"' && probe2_ok=1
+  if (( probe1_ok==0 && probe2_ok==0 )); then
+    CRITICALS+=("both probes failed")
+  elif (( probe1_ok==0 || probe2_ok==0 )); then
+    WARNINGS+=("one probe failed")
   fi
-  if echo "$probe_combined_lc" | grep -Eqi 'authentication[[:space:]]+token([[:space:]]+has)?[[:space:]]+been[[:space:]]+invalidated|authentication[[:space:]]+token[[:space:]]+invalidated|token([[:space:]]+has)?[[:space:]]+been[[:space:]]+invalidated|please[[:space:]]+try[[:space:]]+signing[[:space:]]+in[[:space:]]+again'; then
-    probe_hint_auth=1
-    WARNINGS+=("probe hint: auth token invalidated / re-login required (not pure network outage)")
-  fi
-  if echo "$probe_combined_lc" | grep -Eqi 'connected[[:space:]]*\|[[:space:]]*error|run[[:space:]]+error'; then
-    probe_hint_provider=1
-    WARNINGS+=("probe hint: provider runtime returned connected|error")
-  fi
-  retry_after_raw="$(echo "$probe_combined_lc" | grep -Eo 'try[[:space:]]+again[[:space:]]+in[[:space:]]*~?[0-9]+[[:space:]]*min' | head -n1 || true)"
-  if [[ -n "$retry_after_raw" ]]; then
-    probe_retry_after_minutes="$(echo "$retry_after_raw" | sed -E 's/.*~?([0-9]+).*/\1/' || true)"
-    if [[ "$probe_retry_after_minutes" =~ ^[0-9]+$ && $probe_retry_after_minutes -gt 0 ]]; then
-      WARNINGS+=("probe hint: upstream retry-after about ${probe_retry_after_minutes} min")
-    else
-      probe_retry_after_minutes=0
+  if (( probe1_ok==0 || probe2_ok==0 )); then
+    probe_combined_lc="$(printf '%s\n%s\n' "$probe1_out" "$probe2_out" | tr '[:upper:]' '[:lower:]')"
+    if echo "$probe_combined_lc" | grep -Eqi 'you have hit your chatgpt usage limit|usage[[:space:]]+limit|api[[:space:]]+rate[[:space:]]+limit([[:space:]]+reached)?|rate[[:space:]-]*limit'; then
+      probe_hint_quota=1
+      WARNINGS+=("probe hint: quota/rate-limit pressure (not pure network outage)")
+    fi
+    if echo "$probe_combined_lc" | grep -Eqi 'authentication[[:space:]]+token([[:space:]]+has)?[[:space:]]+been[[:space:]]+invalidated|authentication[[:space:]]+token[[:space:]]+invalidated|token([[:space:]]+has)?[[:space:]]+been[[:space:]]+invalidated|please[[:space:]]+try[[:space:]]+signing[[:space:]]+in[[:space:]]+again'; then
+      probe_hint_auth=1
+      WARNINGS+=("probe hint: auth token invalidated / re-login required (not pure network outage)")
+    fi
+    if echo "$probe_combined_lc" | grep -Eqi 'connected[[:space:]]*\|[[:space:]]*error|run[[:space:]]+error'; then
+      probe_hint_provider=1
+      WARNINGS+=("probe hint: provider runtime returned connected|error")
+    fi
+    retry_after_raw="$(echo "$probe_combined_lc" | grep -Eo 'try[[:space:]]+again[[:space:]]+in[[:space:]]*~?[0-9]+[[:space:]]*min' | head -n1 || true)"
+    if [[ -n "$retry_after_raw" ]]; then
+      probe_retry_after_minutes="$(echo "$retry_after_raw" | sed -E 's/.*~?([0-9]+).*/\1/' || true)"
+      if [[ "$probe_retry_after_minutes" =~ ^[0-9]+$ && $probe_retry_after_minutes -gt 0 ]]; then
+        WARNINGS+=("probe hint: upstream retry-after about ${probe_retry_after_minutes} min")
+      else
+        probe_retry_after_minutes=0
+      fi
     fi
   fi
-fi
 
-# Probe-driven inferred failure: if runtime clearly indicates auth/quota pressure, quarantine the likely active profile immediately.
-if (( (probe_hint_quota==1 || probe_hint_auth==1 || probe_hint_provider==1) && ${#ALL_PROFILES[@]} > 0 )); then
-  inferred_fail_profile="$(AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" node - <<'NODE'
+  # Probe-driven inferred failure: if runtime clearly indicates auth/quota pressure, quarantine the likely active profile immediately.
+  if (( (probe_hint_quota==1 || probe_hint_auth==1 || probe_hint_provider==1) && ${#ALL_PROFILES[@]} > 0 )); then
+    inferred_fail_profile="$(AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" ALL_PROFILES_JOINED="$(printf '%s\n' "${ALL_PROFILES[@]:-}")" node - <<'NODE'
 const fs=require('fs');
 const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
 const all=split(process.env.ALL_PROFILES_JOINED);
@@ -298,26 +397,29 @@ if(!pick && all.length>0) pick=all[0];
 if(pick) process.stdout.write(pick);
 NODE
 )"
-  if [[ -z "$inferred_fail_profile" ]]; then inferred_fail_profile="${ALL_PROFILES[0]:-}"; fi
+    if [[ -z "$inferred_fail_profile" ]]; then inferred_fail_profile="${ALL_PROFILES[0]:-}"; fi
 
-  if [[ -n "$inferred_fail_profile" ]]; then
-    already_failed=0
-    for fp in "${FAILED_PROFILES[@]:-}"; do [[ "$fp" == "$inferred_fail_profile" ]] && already_failed=1 && break; done
-    if (( already_failed==0 )); then FAILED_PROFILES+=("$inferred_fail_profile"); fi
-    WARNINGS+=("probe inferred failing profile: ${inferred_fail_profile#${PROFILE_PREFIX}}")
+    if [[ -n "$inferred_fail_profile" ]]; then
+      already_failed=0
+      for fp in "${FAILED_PROFILES[@]:-}"; do [[ "$fp" == "$inferred_fail_profile" ]] && already_failed=1 && break; done
+      if (( already_failed==0 )); then FAILED_PROFILES+=("$inferred_fail_profile"); fi
+      WARNINGS+=("probe inferred failing profile: ${inferred_fail_profile#${PROFILE_PREFIX}}")
 
-    if [[ "$PROBE_HINT_FORCE_TRIP" == "1" ]]; then PROFILE_FORCE_TRIP["$inferred_fail_profile"]=1; fi
+      if [[ "$PROBE_HINT_FORCE_TRIP" == "1" ]]; then PROFILE_FORCE_TRIP["$inferred_fail_profile"]=1; fi
 
-    if [[ "$probe_retry_after_minutes" =~ ^[0-9]+$ && $probe_retry_after_minutes -gt 0 ]]; then
-      inferred_cd=$((probe_retry_after_minutes*60))
-      if [[ "$PROBE_HINT_MIN_COOLDOWN_SECONDS" =~ ^[0-9]+$ && $inferred_cd -lt $PROBE_HINT_MIN_COOLDOWN_SECONDS ]]; then inferred_cd=$PROBE_HINT_MIN_COOLDOWN_SECONDS; fi
-      if [[ "$PROBE_HINT_MAX_COOLDOWN_SECONDS" =~ ^[0-9]+$ && $PROBE_HINT_MAX_COOLDOWN_SECONDS -gt 0 && $inferred_cd -gt $PROBE_HINT_MAX_COOLDOWN_SECONDS ]]; then inferred_cd=$PROBE_HINT_MAX_COOLDOWN_SECONDS; fi
-      PROFILE_HINT_COOLDOWN["$inferred_fail_profile"]="$inferred_cd"
+      if [[ "$probe_retry_after_minutes" =~ ^[0-9]+$ && $probe_retry_after_minutes -gt 0 ]]; then
+        inferred_cd=$((probe_retry_after_minutes*60))
+        if [[ "$PROBE_HINT_MIN_COOLDOWN_SECONDS" =~ ^[0-9]+$ && $inferred_cd -lt $PROBE_HINT_MIN_COOLDOWN_SECONDS ]]; then inferred_cd=$PROBE_HINT_MIN_COOLDOWN_SECONDS; fi
+        if [[ "$PROBE_HINT_MAX_COOLDOWN_SECONDS" =~ ^[0-9]+$ && $PROBE_HINT_MAX_COOLDOWN_SECONDS -gt 0 && $inferred_cd -gt $PROBE_HINT_MAX_COOLDOWN_SECONDS ]]; then inferred_cd=$PROBE_HINT_MAX_COOLDOWN_SECONDS; fi
+        PROFILE_HINT_COOLDOWN["$inferred_fail_profile"]="$inferred_cd"
+      fi
     fi
   fi
-fi
 
-if (( probe_hint_quota==1 || probe_hint_auth==1 )); then STATUS_HAS_AUTH=1; fi
+  if (( probe_hint_quota==1 || probe_hint_auth==1 )); then STATUS_HAS_AUTH=1; fi
+else
+  WARNINGS+=("probe disabled by OCX_DISABLE_PROBES=1")
+fi
 
 if ((${#FAILED_PROFILES[@]} > 0)); then mapfile -t FAILED_PROFILES < <(printf '%s\n' "${FAILED_PROFILES[@]}" | awk 'NF' | sort -u); fi
 
@@ -571,7 +673,7 @@ for(const id of out) console.log(id);
 NODE
   )
   if ((${#probe_demote_order[@]} > 0)); then
-    if openclaw models auth order set --agent main --provider "$PROVIDER" "${probe_demote_order[@]}" >/dev/null 2>&1; then
+    if apply_order_override "${probe_demote_order[@]}"; then
       WARNINGS+=("probe failover applied: demoted ${inferred_fail_profile#${PROFILE_PREFIX}} to order tail")
     else
       WARNINGS+=("probe failover apply failed for ${inferred_fail_profile#${PROFILE_PREFIX}}")
@@ -626,13 +728,13 @@ for(;;){
 NODE
   )
   if ((${#sorted_profiles[@]} > 0)); then
-    openclaw models auth order set --agent main --provider "$PROVIDER" "${sorted_profiles[@]}" >/dev/null 2>&1 || WARNINGS+=("auto reorder failed")
+    apply_order_override "${sorted_profiles[@]}" || WARNINGS+=("auto reorder failed")
   fi
 fi
 
 # enforce hard-isolation order when auto reorder is disabled
 if [[ "$AUTO_REORDER" != "1" && "$HARD_DISABLE_FAILED" == "1" && ${#ORDER_INPUT_PROFILES[@]} -gt 0 ]]; then
-  if openclaw models auth order set --agent main --provider "$PROVIDER" "${ORDER_INPUT_PROFILES[@]}" >/dev/null 2>&1; then
+  if apply_order_override "${ORDER_INPUT_PROFILES[@]}"; then
     WARNINGS+=("hard isolate order applied (auto reorder disabled)")
   else
     WARNINGS+=("hard isolate order apply failed")
@@ -641,7 +743,9 @@ fi
 
 # sync auth order always best effort
 sync_note=""
-if [[ "$AUTO_REORDER" == "1" ]]; then
+if [[ "$ORDER_WRITE_MODE" == "auth-file" ]]; then
+  sync_note="sync skipped (order write mode=auth-file)"
+elif [[ "$AUTO_REORDER" == "1" ]]; then
   sync_note="sync skipped (auto reorder enabled)"
 elif [[ -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
   if "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" "$PROVIDER" main >/dev/null 2>&1; then sync_note="sync_openclaw_auth_order: ok"; else sync_note="sync_openclaw_auth_order: failed"; WARNINGS+=("sync_openclaw_auth_order failed"); fi

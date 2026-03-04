@@ -8,6 +8,7 @@ set -euo pipefail
 PROFILE_ID="${1:-}"
 AGENT_ID="${2:-main}"
 AUTH_JSON_PATH="${3:-/root/.codex/auth.json}"
+SKIP_MODELS_STATUS="${OCX_IMPORT_SKIP_MODELS_STATUS:-0}"
 
 if [[ -z "$PROFILE_ID" ]]; then
   echo "usage: $0 <profileId> [agentId] [authJsonPath]" >&2
@@ -92,6 +93,8 @@ fs.writeFileSync(authProfilesPath, JSON.stringify(dst, null, 2));
 console.log(`imported ${profileId} -> ${authProfilesPath}`);
 NODE
 
-openclaw models status --json >/dev/null
+if [[ "$SKIP_MODELS_STATUS" != "1" ]]; then
+  openclaw models status --json >/dev/null
+fi
 
 echo "done"

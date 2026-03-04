@@ -3,6 +3,7 @@ set -euo pipefail
 PROVIDER="${1:-openai-codex}"
 AGENT="${2:-main}"
 AUTH_PROFILES_PATH="${OCX_AUTH_PROFILES_PATH:-/root/.openclaw/agents/${AGENT}/agent/auth-profiles.json}"
+ORDER_WRITE_MODE="${OCX_ORDER_WRITE_MODE:-auth-file}"  # auth-file | cli
 
 # Prefer auth-profiles.json as source of truth to avoid stale models-status cache
 # causing profile loss during rapid/batch onboarding.
@@ -41,5 +42,26 @@ if ((${#ids[@]}==0)); then
   exit 1
 fi
 
-openclaw models auth order set --agent "$AGENT" --provider "$PROVIDER" "${ids[@]}" >/dev/null
-echo "synced $PROVIDER order for agent $AGENT: ${ids[*]}"
+if [[ "$ORDER_WRITE_MODE" == "auth-file" && -f "$AUTH_PROFILES_PATH" ]]; then
+  ORDER_JOINED="$(printf '%s\n' "${ids[@]}")" AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" node - <<'NODE'
+const fs=require('fs');
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const path=process.env.AUTH_PROFILES_PATH;
+const provider=String(process.env.PROVIDER||'openai-codex').trim();
+const ids=split(process.env.ORDER_JOINED);
+let j={};
+try{j=JSON.parse(fs.readFileSync(path,'utf8'));}catch{j={};}
+if(!j || typeof j!=='object') j={};
+if(!j.order || typeof j.order!=='object') j.order={};
+j.order[provider]=ids;
+if(!j.lastGood || typeof j.lastGood!=='object') j.lastGood={};
+if(!j.lastGood[provider] || !ids.includes(j.lastGood[provider])){
+  if(ids.length>0) j.lastGood[provider]=ids[0];
+}
+fs.writeFileSync(path, JSON.stringify(j,null,2));
+NODE
+  echo "synced $PROVIDER order for agent $AGENT via auth-file: ${ids[*]}"
+else
+  openclaw models auth order set --agent "$AGENT" --provider "$PROVIDER" "${ids[@]}" >/dev/null
+  echo "synced $PROVIDER order for agent $AGENT via cli: ${ids[*]}"
+fi
