@@ -144,7 +144,7 @@ batch_onboard() {
       continue
     fi
 
-    if ! "$LOGIN_SCRIPT" "$profile" "$AUTH_PATH_DEFAULT"; then
+    if ! OCX_ONBOARD_SYNC_AFTER_ONBOARD=0 OCX_ONBOARD_POST_VERIFY=0 "$LOGIN_SCRIPT" "$profile" "$AUTH_PATH_DEFAULT"; then
       echo "失败：$profile 登录/导入失败"
       fail=$((fail+1))
       failed_list+="$profile (login-or-import-fail)\n"
@@ -155,6 +155,11 @@ batch_onboard() {
     ok=$((ok+1))
     echo "成功：$profile"
   done
+
+  # sync order once at the end to avoid per-profile churn/race during batch import
+  if [[ $ok -gt 0 && -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
+    "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" "${OCX_PROVIDER:-openai-codex}" main >/dev/null 2>&1 || true
+  fi
 
   say "批量导入完成：成功 $ok，失败 $fail"
   if (( fail > 0 )); then

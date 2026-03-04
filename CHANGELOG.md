@@ -21,6 +21,7 @@ All notable changes to this project are documented here.
 - Fixed probe-driven failover blind spot for runtime errors like `usage limit`, `token has been invalidated`, and `connected | error`: the script now infers and trips the likely failing profile immediately, supports retry-after-derived cooldown windows, and can demote the suspected profile even when `OCX_AUTO_REORDER=0`.
 - Updated homepage/docs metadata to 2026-03-03, including release notes and announcement copy templates for the new failover fix.
 - Implemented failover v2 hard-isolation flow in `healthcheck_openai_codex_pool.sh`: failed profiles are quarantined out of order input, optional account-level quarantine (`OCX_HARD_DISABLE_FAILED_ACCOUNT=1`) is applied by `accountId`, and quarantined profiles require consecutive healthy rounds (`OCX_RECOVERY_SUCCESS_ROUNDS`) before rejoining active rotation.
+- Hardened batch onboarding stability: `sync_openclaw_auth_order.sh` now uses `auth-profiles.json` as source of truth (with safe merge order) to avoid stale status-driven profile churn; `onboard_openai_codex_profile.sh` supports deferred sync/verify flags for batch mode (`OCX_ONBOARD_SYNC_AFTER_ONBOARD`, `OCX_ONBOARD_POST_VERIFY`), and wizard batch path syncs once at end.
 
 ## [2026-02-18] - Hardening + usability pass
 

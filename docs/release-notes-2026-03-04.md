@@ -20,6 +20,12 @@ This release ships failover v2 with hard isolation and controlled recovery. Fail
   - Automatically relaxes strict isolation if active capacity drops too low
 - Health report observability extended
   - New fields: `activeProfiles`, `activeProfileCount`, `activeAccountCount`, `quarantinedProfiles`, `quarantinedAccounts`, `orderInputProfiles`
+- Batch onboarding stability hardening
+  - `sync_openclaw_auth_order.sh` now prefers `auth-profiles.json` as source of truth to avoid stale status-label drift during rapid imports
+  - `onboard_openai_codex_profile.sh` adds batch-safe toggles:
+    - `OCX_ONBOARD_SYNC_AFTER_ONBOARD` (default `1`)
+    - `OCX_ONBOARD_POST_VERIFY` (default `1`)
+  - wizard batch import disables per-profile sync/verify and performs one final sync at batch end
 
 ## Docs updates
 - README homepage date + latest increment updated to `2026-03-04`

@@ -17,6 +17,8 @@ PROFILE_ID="${1:-}"
 DEFAULT_AUTH_JSON_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
 AUTH_JSON_PATH="${2:-$DEFAULT_AUTH_JSON_PATH}"
 AUTH_MAP_FILE="${OCX_AUTH_MAP_FILE:-$BASE_DIR/config/openai-codex-auth-map.env}"
+SYNC_AFTER_ONBOARD="${OCX_ONBOARD_SYNC_AFTER_ONBOARD:-1}"
+POST_VERIFY_AFTER_ONBOARD="${OCX_ONBOARD_POST_VERIFY:-1}"
 
 if [[ -z "$PROFILE_ID" ]]; then
   echo "usage: $0 <profileId> [auth.json path]" >&2
@@ -48,8 +50,8 @@ awk -F= -v k="$PROFILE_ID" '$1!=k' "$AUTH_MAP_FILE" > "$AUTH_MAP_FILE.tmp" || tr
 echo "$PROFILE_ID=$AUTH_JSON_PATH" >> "$AUTH_MAP_FILE.tmp"
 mv "$AUTH_MAP_FILE.tmp" "$AUTH_MAP_FILE"
 
-# sync order
-if [[ -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
+# sync order (can be deferred by batch workflows)
+if [[ "$SYNC_AFTER_ONBOARD" == "1" && -x "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" ]]; then
   "$BASE_DIR/scripts/sync_openclaw_auth_order.sh" "$PROVIDER" main >/dev/null 2>&1 || true
 fi
 
@@ -57,7 +59,7 @@ fi
 openclaw models status --json | node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync(0,'utf8'));const p='${PROFILE_ID}';const ok=((d.auth?.oauth?.profiles||[]).some(x=>x.profileId===p));console.log(ok?'onboard ok: '+p:'onboard maybe failed: '+p);process.exit(ok?0:1)"
 
 # optional post-onboard health verify (no notify)
-if [[ -x "$BASE_DIR/scripts/healthcheck_openai_codex_pool.sh" ]]; then
+if [[ "$POST_VERIFY_AFTER_ONBOARD" == "1" && -x "$BASE_DIR/scripts/healthcheck_openai_codex_pool.sh" ]]; then
   OCX_DRY_RUN=1 "$BASE_DIR/scripts/healthcheck_openai_codex_pool.sh" >/dev/null 2>&1 || true
 fi
 

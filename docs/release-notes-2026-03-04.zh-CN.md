@@ -20,6 +20,12 @@
   - 当 active 容量过低时自动放宽隔离，避免可用性被压到 0
 - 健康报告可观测性增强
   - 新增字段：`activeProfiles`、`activeProfileCount`、`activeAccountCount`、`quarantinedProfiles`、`quarantinedAccounts`、`orderInputProfiles`
+- 批量导入稳定性加固
+  - `sync_openclaw_auth_order.sh` 改为优先读取 `auth-profiles.json` 作为真值来源，避免快速导入时依赖状态标签产生漂移
+  - `onboard_openai_codex_profile.sh` 新增批量安全开关：
+    - `OCX_ONBOARD_SYNC_AFTER_ONBOARD`（默认 `1`）
+    - `OCX_ONBOARD_POST_VERIFY`（默认 `1`）
+  - 向导批量导入改为“逐条导入不做每条同步/验收，最后统一同步一次”
 
 ## 文档更新
 - README 首页日期与“最新增量”更新到 `2026-03-04`
