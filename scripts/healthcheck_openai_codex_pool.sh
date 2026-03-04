@@ -391,6 +391,7 @@ done
 if [[ "$HARD_DISABLE_FAILED" == "1" && "$HARD_DISABLE_FAILED_ACCOUNT" == "1" && "$ACCOUNT_QUARANTINE_SECONDS" =~ ^[0-9]+$ && $ACCOUNT_QUARANTINE_SECONDS -gt 0 ]]; then
   declare -A _qacc_seen
   for f in "${FAILED_PROFILES[@]:-}"; do
+    [[ -n "$f" ]] || continue
     aid="${PROFILE_ACCOUNT_MAP[$f]:-}"
     [[ -n "$aid" ]] || continue
     [[ -n "${_qacc_seen[$aid]:-}" ]] && continue
