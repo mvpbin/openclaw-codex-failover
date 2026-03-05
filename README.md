@@ -1,6 +1,6 @@
 # OpenClaw Codex 容灾机制（小白友好最终版）
 
-> Last updated: 2026-03-04
+> Last updated: 2026-03-05
 
 > 当前阶段：**Beta（可公开试用）**
 >
@@ -14,15 +14,15 @@
 
 **检测 → 分级 → 熔断 → 修复 →（可选）删除 → 补位 → 恢复**
 
-## 最新增量（2026-03-04）
+## 最新增量（2026-03-05）
 
-- ✅ 落地 failover v2：失败账号硬隔离（`OCX_HARD_DISABLE_FAILED=1`），生产轮换仅使用 active 池
-- ✅ 新增按账号联动隔离：某 profile 失败时，可按 `accountId` 隔离同账号全部 profiles（`OCX_HARD_DISABLE_FAILED_ACCOUNT=1`）
-- ✅ 新增受控恢复门槛：隔离账号需连续 N 轮健康才可回池（`OCX_RECOVERY_SUCCESS_ROUNDS`）
-- ✅ 新增 fail-open 保护阈值：当 active profiles / active accounts 过低时自动放宽，避免把可用性降到 0
-- ✅ 健康报告新增可观测字段：`activeProfiles` / `quarantinedProfiles` / `orderInputProfiles` / `activeAccountCount`
+- ✅ 修复“写入后被回收”：`auth-profiles.json` 写入链路补齐文件锁 + 原子写（tmp+rename）
+- ✅ 新增反回滚守护：`openclaw-profile-reconcile.timer` 每 2 分钟回灌缺失 profile（from `openai-codex-auth-map.env`）
+- ✅ 新增独立凭据快照：每个 profile 使用独立 `auth.json` 路径，避免共享凭据被覆盖串号
+- ✅ 修复过期判定链路：`remainingMs` 保留负值，失效账号可正确进入 failed/隔离流程
+- ✅ 增加可回归验证：新增 quota 注入自测脚本，验证“限额后自动切号”是否在时限内生效
 
-> 这次是“硬隔离 + 受控恢复 + 不中断服务”的修复包。
+> 这次是“持久化不回滚 + 自动回灌 + 可验证切换”的永久修复包。
 
 ## 60 秒 Demo（已提供录屏）
 
@@ -71,7 +71,7 @@ agg docs/demo/quick-validation.cast docs/demo/demo.gif
 ## 已验证环境
 
 - Ubuntu 22.04 LTS
-- OpenClaw 2026.2.17
+- OpenClaw 2026.3.2
 - Node.js 22.x
 - Codex CLI 0.104.0
 
@@ -273,6 +273,10 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 | `OCX_AGENT_TIMEOUT_SECONDS` | `45` | 轻量调用超时 |
 | `OCX_CODEX_AUTH_PATH` | `/root/.codex/auth.json` | Codex 登录凭证路径（按运行用户调整） |
 | `OCX_AUTH_PROFILES_PATH` | `/root/.openclaw/agents/main/agent/auth-profiles.json` | accountId 回填来源（models status 不含 accountId 时使用） |
+| `OCX_AUTH_SNAPSHOT_DIR` | `/data/openclaw/auth/openai-codex` | 每个 profile 独立 auth 快照目录 |
+| `OCX_AUTH_SNAPSHOT_PERSIST` | `1` | 1=onboard 后把凭据落到 profile 独立路径 |
+| `OCX_RECONCILE_MODE` | `missing-only` | profile 反回滚模式（缺失即补） |
+| `OCX_RECONCILE_LOCK_FILE` | `/data/openclaw/run/openai_codex_reconcile.lock` | reconcile 互斥锁文件 |
 | `OCX_LOG_RETENTION_DAYS` | `30` | 日志保留天数 |
 | `OCX_DRY_RUN` | `0` | 1=只检查不发消息 |
 | `OCX_AUTO_REPAIR` | `0` | 1=异常时自动触发修复 |
@@ -298,6 +302,15 @@ ${OCX_BASE_DIR:-/data/openclaw}/scripts/onboard_openai_codex_profile.sh openai-c
 ## 常用命令
 
 ```bash
+# 反回滚守护：手动补齐缺失 profile
+${OCX_BASE_DIR:-/data/openclaw}/scripts/reconcile_openai_codex_profiles_from_map.sh
+
+# 一次性将当前 auth store 固化成“每 profile 独立凭据快照”
+${OCX_BASE_DIR:-/data/openclaw}/scripts/materialize_openai_codex_auth_snapshots.sh
+
+# 限额切号自测（默认 shadow 模式，不污染线上状态）
+${OCX_BASE_DIR:-/data/openclaw}/scripts/selftest_quota_failover_switch.sh --mode shadow --timeout 30 --interval 2
+
 # 仅检查不发通知
 ${OCX_BASE_DIR:-/data/openclaw}/scripts/healthcheck_openai_codex_pool.sh --dry-run
 
@@ -390,8 +403,9 @@ OCX_CB_FAILCOUNT_DECAY_INTERVAL_SECONDS=1800
 - 快速开始：`docs/quickstart-zh.md`
 - 故障排查：`docs/troubleshooting-zh.md`
 - 变更记录：`CHANGELOG.md`
-- Release Notes (EN, latest): `docs/release-notes-2026-03-04.md`
-- 发布说明（中文，最新）: `docs/release-notes-2026-03-04.zh-CN.md`
+- Release Notes (EN, latest): `docs/release-notes-2026-03-05.md`
+- 发布说明（中文，最新）: `docs/release-notes-2026-03-05.zh-CN.md`
+- 先前发布说明：`docs/release-notes-2026-03-04.md` / `docs/release-notes-2026-03-04.zh-CN.md`
 - 历史发布说明：`docs/release-notes-2026-03-03.md` / `docs/release-notes-2026-03-03.zh-CN.md`
 
 ## License
