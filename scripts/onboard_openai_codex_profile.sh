@@ -17,6 +17,8 @@ PROFILE_ID="${1:-}"
 DEFAULT_AUTH_JSON_PATH="${OCX_CODEX_AUTH_PATH:-/root/.codex/auth.json}"
 AUTH_JSON_PATH="${2:-$DEFAULT_AUTH_JSON_PATH}"
 AUTH_MAP_FILE="${OCX_AUTH_MAP_FILE:-$BASE_DIR/config/openai-codex-auth-map.env}"
+AUTH_SNAPSHOT_DIR="${OCX_AUTH_SNAPSHOT_DIR:-$BASE_DIR/auth/${PROVIDER}}"
+AUTH_SNAPSHOT_PERSIST="${OCX_AUTH_SNAPSHOT_PERSIST:-1}"
 SYNC_AFTER_ONBOARD="${OCX_ONBOARD_SYNC_AFTER_ONBOARD:-1}"
 POST_VERIFY_AFTER_ONBOARD="${OCX_ONBOARD_POST_VERIFY:-1}"
 QUICK_VERIFY_AFTER_ONBOARD="${OCX_ONBOARD_QUICK_VERIFY:-1}"
@@ -44,11 +46,22 @@ fi
 
 "$BASE_DIR/scripts/import_codex_auth_to_openclaw.sh" "$PROFILE_ID" main "$AUTH_JSON_PATH"
 
+stored_auth_path="$AUTH_JSON_PATH"
+if [[ "$AUTH_SNAPSHOT_PERSIST" == "1" ]]; then
+  profile_suffix="${PROFILE_ID#${PROVIDER}:}"
+  snapshot_dir="$AUTH_SNAPSHOT_DIR/$profile_suffix"
+  snapshot_path="$snapshot_dir/auth.json"
+  mkdir -p "$snapshot_dir"
+  cp "$AUTH_JSON_PATH" "$snapshot_path"
+  chmod 600 "$snapshot_path"
+  stored_auth_path="$snapshot_path"
+fi
+
 # update map file for future auto-repair
 mkdir -p "$(dirname "$AUTH_MAP_FILE")"
 touch "$AUTH_MAP_FILE"
 awk -F= -v k="$PROFILE_ID" '$1!=k' "$AUTH_MAP_FILE" > "$AUTH_MAP_FILE.tmp" || true
-echo "$PROFILE_ID=$AUTH_JSON_PATH" >> "$AUTH_MAP_FILE.tmp"
+echo "$PROFILE_ID=$stored_auth_path" >> "$AUTH_MAP_FILE.tmp"
 mv "$AUTH_MAP_FILE.tmp" "$AUTH_MAP_FILE"
 
 # sync order (can be deferred by batch workflows)

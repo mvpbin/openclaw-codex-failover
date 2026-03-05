@@ -1,0 +1,13 @@
+[Unit]
+Description=Reconcile OpenClaw auth profiles from auth map
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/openclaw-healthcheck.env
+ExecStart=/usr/bin/bash -lc '${OCX_BASE_DIR:-/data/openclaw}/scripts/reconcile_openai_codex_profiles_from_map.sh'
+
+[Install]
+WantedBy=multi-user.target

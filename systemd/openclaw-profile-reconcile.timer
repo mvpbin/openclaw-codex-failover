@@ -1,0 +1,10 @@
+[Unit]
+Description=Run OpenClaw profile reconcile every 2 minutes
+
+[Timer]
+OnCalendar=*:0/2
+Persistent=true
+Unit=openclaw-profile-reconcile.service
+
+[Install]
+WantedBy=timers.target
