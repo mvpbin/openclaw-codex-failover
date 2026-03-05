@@ -2,7 +2,8 @@
 set -euo pipefail
 
 DEFAULT_ENV_FILE="/etc/openclaw-healthcheck.env"
-if [[ -f "$DEFAULT_ENV_FILE" ]]; then
+SKIP_DEFAULT_ENV="${OCX_SKIP_DEFAULT_ENV:-0}"
+if [[ "$SKIP_DEFAULT_ENV" != "1" && -f "$DEFAULT_ENV_FILE" ]]; then
   # shellcheck disable=SC1090
   source "$DEFAULT_ENV_FILE"
 fi
@@ -68,6 +69,8 @@ HARD_DISABLE_MIN_ACTIVE_ACCOUNTS="${OCX_HARD_DISABLE_MIN_ACTIVE_ACCOUNTS:-1}"
 PROFILE_SOURCE="${OCX_PROFILE_SOURCE:-auth-store}"  # auth-store | models-status
 ORDER_WRITE_MODE="${OCX_ORDER_WRITE_MODE:-auth-file}" # auth-file | cli
 DISABLE_PROBES="${OCX_DISABLE_PROBES:-1}"             # 1=skip openclaw agent probe calls
+MAX_PROFILES_PER_ACCOUNT_IN_ORDER="${OCX_MAX_PROFILES_PER_ACCOUNT_IN_ORDER:-0}"
+ACCOUNT_CAP_FAIL_OPEN_MIN_PROFILES="${OCX_ACCOUNT_CAP_FAIL_OPEN_MIN_PROFILES:-2}"
 
 mkdir -p "$REPORT_DIR" "$RUN_DIR" "$CONFIG_HISTORY_DIR"
 DATE_UTC="$(date -u +%Y%m%d)"
@@ -92,8 +95,15 @@ apply_order_override(){
   (( ${#arr[@]} > 0 )) || return 0
 
   if [[ "$ORDER_WRITE_MODE" == "auth-file" && -f "$AUTH_PROFILES_PATH" ]]; then
+    local lock_file="${AUTH_PROFILES_PATH}.lock"
+    exec 8>"$lock_file"
+    if ! flock -w 5 8; then
+      return 1
+    fi
+
     if ORDER_JOINED="$(printf '%s\n' "${arr[@]}")" AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" node - <<'NODE' >/dev/null 2>&1
 const fs=require('fs');
+const pathMod=require('path');
 const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
 const path=process.env.AUTH_PROFILES_PATH;
 const provider=String(process.env.PROVIDER||'openai-codex');
@@ -107,11 +117,16 @@ if(!j.lastGood || typeof j.lastGood!=='object') j.lastGood={};
 if(!j.lastGood[provider] || !order.includes(j.lastGood[provider])){
   if(order.length>0) j.lastGood[provider]=order[0];
 }
-fs.writeFileSync(path, JSON.stringify(j,null,2));
+const dir=pathMod.dirname(path);
+const tmp=pathMod.join(dir, `.${pathMod.basename(path)}.tmp-${process.pid}-${Date.now()}`);
+fs.writeFileSync(tmp, JSON.stringify(j,null,2));
+fs.renameSync(tmp, path);
 NODE
     then
+      flock -u 8
       return 0
     fi
+    flock -u 8
     return 1
   fi
 
@@ -194,7 +209,7 @@ for(const pid of Object.keys(map)){
   const row=map[pid]||{};
   const expRaw=Number(row.expires||0);
   const expSec = expRaw>1e12 ? Math.floor(expRaw/1000) : Math.floor(expRaw||0);
-  const remMs = expSec>0 ? Math.max(0,(expSec-nowSec)*1000) : 0;
+  const remMs = expSec>0 ? ((expSec-nowSec)*1000) : 0;
   profiles.push({profileId:pid,provider:providerName,remainingMs:remMs,accountId:row.accountId||''});
   labels.push(`${pid}=OAuth`);
 }
@@ -619,6 +634,46 @@ NODE
   [[ "$active_account_count" =~ ^[0-9]+$ ]] || active_account_count=0
 fi
 
+# optional hard account diversity cap for final order input
+if [[ "$MAX_PROFILES_PER_ACCOUNT_IN_ORDER" =~ ^[0-9]+$ && "$ACCOUNT_CAP_FAIL_OPEN_MIN_PROFILES" =~ ^[0-9]+$ && $MAX_PROFILES_PER_ACCOUNT_IN_ORDER -gt 0 && ${#ORDER_INPUT_PROFILES[@]} -gt 0 ]]; then
+  mapfile -t capped_profiles < <(
+    CAP="$MAX_PROFILES_PER_ACCOUNT_IN_ORDER" \
+    ORDER_JOINED="$(printf '%s\n' "${ORDER_INPUT_PROFILES[@]:-}")" \
+    ACCOUNT_JOINED="$(for p in "${ALL_PROFILES[@]:-}"; do [[ -n "${PROFILE_ACCOUNT_MAP[$p]:-}" ]] && echo "$p=${PROFILE_ACCOUNT_MAP[$p]}"; done)" \
+    node - <<'NODE'
+const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
+const mapFrom=(s)=>{const o={}; for(const l of split(s)){ const i=l.indexOf('='); if(i>0) o[l.slice(0,i).trim()]=l.slice(i+1).trim(); } return o; };
+const cap=Math.max(0, Number(process.env.CAP||0));
+const order=split(process.env.ORDER_JOINED);
+const accMap=mapFrom(process.env.ACCOUNT_JOINED);
+const count=new Map();
+for(const id of order){
+  const aid=String(accMap[id]||'').trim();
+  if(!aid){
+    console.log(id);
+    continue;
+  }
+  const n=count.get(aid)||0;
+  if(n<cap){
+    console.log(id);
+    count.set(aid, n+1);
+  }
+}
+NODE
+  )
+
+  if (( ${#capped_profiles[@]} > 0 )); then
+    if (( ${#capped_profiles[@]} >= ACCOUNT_CAP_FAIL_OPEN_MIN_PROFILES )); then
+      if (( ${#capped_profiles[@]} < ${#ORDER_INPUT_PROFILES[@]} )); then
+        WARNINGS+=("account diversity cap applied: ${#ORDER_INPUT_PROFILES[@]} -> ${#capped_profiles[@]} (max ${MAX_PROFILES_PER_ACCOUNT_IN_ORDER} profile/account)")
+      fi
+      ORDER_INPUT_PROFILES=("${capped_profiles[@]}")
+    else
+      WARNINGS+=("account diversity cap fail-open: capped=${#capped_profiles[@]} < ${ACCOUNT_CAP_FAIL_OPEN_MIN_PROFILES}")
+    fi
+  fi
+fi
+
 # recommendations
 if (( ${#ALL_PROFILES[@]} < RECOMMENDED_MIN )); then WARNINGS+=("profile count below recommendation: ${#ALL_PROFILES[@]} < ${RECOMMENDED_MIN}"); fi
 if (( ${#ALL_PROFILES[@]} > RECOMMENDED_MAX )); then WARNINGS+=("profile count above recommendation: ${#ALL_PROFILES[@]} > ${RECOMMENDED_MAX}"); fi
@@ -830,7 +885,8 @@ const report={
   anomalyClass:process.env.ANOMALY_CLASS,
   provider:process.env.PROVIDER,
   discoveredProfiles:split(process.env.ALL_PROFILES_JOINED),
-  discoveredCount:Number(process.env.PROFILE_COUNT||0),
+  discoveredCount:split(process.env.ALL_PROFILES_JOINED).length,
+  statusDiscoveredCount:Number(process.env.PROFILE_COUNT||0),
   activeProfiles:split(process.env.ACTIVE_JOINED),
   activeProfileCount:split(process.env.ACTIVE_JOINED).length,
   activeAccountCount:Number(process.env.ACTIVE_ACCOUNT_COUNT||0),

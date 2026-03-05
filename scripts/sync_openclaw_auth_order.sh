@@ -43,8 +43,16 @@ if ((${#ids[@]}==0)); then
 fi
 
 if [[ "$ORDER_WRITE_MODE" == "auth-file" && -f "$AUTH_PROFILES_PATH" ]]; then
+  AUTH_PROFILES_LOCK="${AUTH_PROFILES_PATH}.lock"
+  exec 8>"$AUTH_PROFILES_LOCK"
+  if ! flock -w 10 8; then
+    echo "failed to acquire auth profile lock: $AUTH_PROFILES_LOCK" >&2
+    exit 1
+  fi
+
   ORDER_JOINED="$(printf '%s\n' "${ids[@]}")" AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" PROVIDER="$PROVIDER" node - <<'NODE'
 const fs=require('fs');
+const pathMod=require('path');
 const split=(s)=>String(s||'').split('\n').map(x=>x.trim()).filter(Boolean);
 const path=process.env.AUTH_PROFILES_PATH;
 const provider=String(process.env.PROVIDER||'openai-codex').trim();
@@ -58,8 +66,12 @@ if(!j.lastGood || typeof j.lastGood!=='object') j.lastGood={};
 if(!j.lastGood[provider] || !ids.includes(j.lastGood[provider])){
   if(ids.length>0) j.lastGood[provider]=ids[0];
 }
-fs.writeFileSync(path, JSON.stringify(j,null,2));
+const dir=pathMod.dirname(path);
+const tmp=pathMod.join(dir, `.${pathMod.basename(path)}.tmp-${process.pid}-${Date.now()}`);
+fs.writeFileSync(tmp, JSON.stringify(j,null,2));
+fs.renameSync(tmp, path);
 NODE
+  flock -u 8
   echo "synced $PROVIDER order for agent $AGENT via auth-file: ${ids[*]}"
 else
   openclaw models auth order set --agent "$AGENT" --provider "$PROVIDER" "${ids[@]}" >/dev/null

@@ -26,8 +26,16 @@ fi
 AUTH_PROFILES_PATH="/root/.openclaw/agents/${AGENT_ID}/agent/auth-profiles.json"
 mkdir -p "$(dirname "$AUTH_PROFILES_PATH")"
 
+AUTH_PROFILES_LOCK="${AUTH_PROFILES_PATH}.lock"
+exec 8>"$AUTH_PROFILES_LOCK"
+if ! flock -w 10 8; then
+  echo "failed to acquire auth profile lock: $AUTH_PROFILES_LOCK" >&2
+  exit 1
+fi
+
 PROFILE_ID="$PROFILE_ID" AUTH_JSON_PATH="$AUTH_JSON_PATH" AUTH_PROFILES_PATH="$AUTH_PROFILES_PATH" node - <<'NODE'
 const fs = require('fs');
+const path = require('path');
 
 const profileId = process.env.PROFILE_ID;
 const authJsonPath = process.env.AUTH_JSON_PATH;
@@ -89,9 +97,14 @@ dst.usageStats[profileId] = dst.usageStats[profileId] || {
 };
 dst.usageStats[profileId].updatedAt = now;
 
-fs.writeFileSync(authProfilesPath, JSON.stringify(dst, null, 2));
+const dir = path.dirname(authProfilesPath);
+const tmp = path.join(dir, `.${path.basename(authProfilesPath)}.tmp-${process.pid}-${Date.now()}`);
+fs.writeFileSync(tmp, JSON.stringify(dst, null, 2));
+fs.renameSync(tmp, authProfilesPath);
 console.log(`imported ${profileId} -> ${authProfilesPath}`);
 NODE
+
+flock -u 8
 
 if [[ "$SKIP_MODELS_STATUS" != "1" ]]; then
   openclaw models status --json >/dev/null
