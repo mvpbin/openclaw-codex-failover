@@ -22,6 +22,7 @@ All notable changes to this project are documented here.
 - Updated homepage/docs metadata to 2026-03-03, including release notes and announcement copy templates for the new failover fix.
 - Implemented failover v2 hard-isolation flow in `healthcheck_openai_codex_pool.sh`: failed profiles are quarantined out of order input, optional account-level quarantine (`OCX_HARD_DISABLE_FAILED_ACCOUNT=1`) is applied by `accountId`, and quarantined profiles require consecutive healthy rounds (`OCX_RECOVERY_SUCCESS_ROUNDS`) before rejoining active rotation.
 - Hardened batch onboarding stability: `sync_openclaw_auth_order.sh` now uses `auth-profiles.json` as source of truth (with safe merge order) to avoid stale status-driven profile churn; `onboard_openai_codex_profile.sh` supports deferred sync/verify flags for batch mode (`OCX_ONBOARD_SYNC_AFTER_ONBOARD`, `OCX_ONBOARD_POST_VERIFY`), and wizard batch path syncs once at end.
+- Added incident note for profile pool regression (16 -> 11): root cause was mixed gateway versions (`openclaw` CLI upgraded but user service `openclaw-gateway` still on old v2026.2.17). Mitigation: force reinstall/restart user gateway service to v2026.3.2, then re-import and verify multi-round persistence.
 
 ## [2026-02-18] - Hardening + usability pass
 
